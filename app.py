@@ -53,15 +53,15 @@ if os.path.exists(font_filename):
 
 with st.sidebar:
     st.header("📂 確定版CSVデータ読込")
-    uploaded_file = st.file_uploader("@pocket出力CSVを選択", type=["csv"], help="受注番号CO,書名,必要数量...,部材名(芯ボール,背ボール,溝あき等),天地サイズ+-,左右サイズ+-,固定幅【背】等を含むCSV")
+    uploaded_file = st.file_uploader("@pocket出力CSVを選択", type=["csv"], help="受注番号CO,書名,必要数量...,部材名(芯ボール,背ボール,溝あき等),柄名(銘柄),備考等を含むCSV")
 
 default_order_id = "260543"
 default_book_title = "詩画集①"
 default_quantity = 1060
 default_supplier_cover = "㈱博勝堂"
 default_due_cover = "2026/10/14"
-default_supplier_foil = "㈱箔押工房"
-default_due_foil = "2026/10/12"
+default_supplier_foil = "丸栄有限会社"
+default_due_foil = "2026/10/14"
 default_delivery_to = "㈱博勝堂"
 default_hon_h = 182.0
 default_hon_w = 128.0
@@ -69,10 +69,11 @@ default_zenpan_h = 1100.0
 default_zenpan_w = 800.0
 
 default_parts_data = [
-    {"部材名": "芯ボール", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 1},
-    {"部材名": "溝あき", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 2},
-    {"部材名": "背ボール", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": 0.0, "固定幅【背】": 12.0, "レコードID": 3},
-    {"部材名": "芯ボール", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 4},
+    {"部材名": "芯ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 1},
+    {"部材名": "溝あき", "銘柄": "", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 9},
+    {"部材名": "背ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": 0.0, "固定幅【背】": 12.0, "レコードID": 2},
+    {"部材名": "溝あき", "銘柄": "", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 9},
+    {"部材名": "芯ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 3},
 ]
 
 if uploaded_file is not None:
@@ -112,6 +113,7 @@ if uploaded_file is not None:
                 is_groove = "溝あき" in b_name
                 extracted_parts.append({
                     "部材名": b_name,
+                    "銘柄": str(row.get("柄名", "")) if pd.notna(row.get("柄名", "")) else "",
                     "備考": str(row.get("備考", "")) if pd.notna(row.get("備考", "")) else "",
                     "１冊面数": 0 if is_groove else safe_int(row.get("１冊面数", 1), 1),
                     "天地サイズ+-": safe_float(row.get("天地サイズ+-", 0.0), 0.0),
@@ -122,7 +124,7 @@ if uploaded_file is not None:
             if extracted_parts:
                 default_parts_data = extracted_parts
                 
-        st.sidebar.success("✅ 確定版CSVファイルを正常に読み込みました！")
+        st.sidebar.success("✅ 確定版CSVファイルを正常に読み込みました！（柄名＝銘柄読込対応）")
     except Exception as e:
         st.sidebar.error(f"CSV読込エラー: {e}")
 
@@ -161,6 +163,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         
         for _, row in edited_parts.iterrows():
             p_name = str(row.get("部材名", "芯ボール"))
+            p_brand = str(row.get("銘柄", "")) if pd.notna(row.get("銘柄", "")) else ""
             p_remark = str(row.get("備考", "")) if pd.notna(row.get("備考", "")) else ""
             is_groove = "溝あき" in p_name
             p_count = 0 if is_groove else safe_int(row.get("１冊面数", 1), 1)
@@ -198,6 +201,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
             
             calculated_rows.append({
                 "部材名": p_name,
+                "銘柄": p_brand,
                 "備考": p_remark,
                 "面数": "-" if is_groove else f"{p_count}面",
                 "サイズ_W": w,
@@ -219,7 +223,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13)
         center_style = ParagraphStyle('CenterStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13, alignment=1)
         
-        # テーブルヘッダー専用スタイル（フォント変更・デザインブラッシュアップ）
         table_header_style = ParagraphStyle(
             'TableHeaderStyle', 
             parent=styles['Normal'], 
@@ -239,7 +242,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         story.append(Paragraph("<b>発 注 書</b>", title_style))
         story.append(Spacer(1, 6))
         
-        # 発注先 2段表記（表紙貼外注先 ＆ 納期（表紙）、表紙箔押外注先 ＆ 納期（箔押））
         story.append(Paragraph(f"<b>【 表紙貼外注先 】</b> {supplier_cover} 様 ｜ <font color='#c00'><b>納期： {due_cover}</b></font>", due_style))
         story.append(Spacer(1, 4))
         story.append(Paragraph(f"<b>【 表紙箔押外注先 】</b> {supplier_foil} 様 ｜ <font color='#c00'><b>納期： {due_foil}</b></font>", due_style))
@@ -249,24 +251,22 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         story.append(Paragraph(f"<b>必要部数:</b> {quantity}部 ｜ <b>全判規格:</b> {zenpan_w}mm × {zenpan_h}mm ｜ <b>本文サイズ:</b> {hon_w}mm × {hon_h}mm", normal_style))
         story.append(Spacer(1, 10))
         
-        # --- 図解セクション：部材数に応じた【マルチ行（自動改行）対応】 ---
+        # --- 図解セクション ---
         story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 仕様情報（芯ボール20%減・溝あき30%減）</b>", normal_style))
         story.append(Spacer(1, 4))
         
-        # 各部材のカード幅判定（芯ボール -20% = 約100pt、溝あき -30% = 約60pt、背ボール -30% = 約87pt）
         card_metrics = []
         for p in calculated_rows:
             p_lower = p["部材名"]
             if p["is_groove"]:
-                card_metrics.append({"w": int(85 * 0.7), "h": 170, "type": "groove", "p": p}) # 85 * 0.7 = ~59.5 (約60)
+                card_metrics.append({"w": int(85 * 0.7), "h": 170, "type": "groove", "p": p})
             elif "背ボール" in p_lower:
                 card_metrics.append({"w": int(125 * 0.7), "h": 170, "type": "back", "p": p})
             elif "芯ボール" in p_lower:
-                card_metrics.append({"w": int(125 * 0.8), "h": 170, "type": "core", "p": p}) # 125 * 0.8 = 100 (-20%)
+                card_metrics.append({"w": int(125 * 0.8), "h": 170, "type": "core", "p": p})
             else:
                 card_metrics.append({"w": 125, "h": 170, "type": "normal", "p": p})
         
-        # レイアウト計算（最大幅 530pt 以内で自動折り返し）
         max_row_w = 530
         rows_layout = []
         current_row = []
@@ -289,7 +289,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         
         d = Drawing(540, drawing_height)
         
-        # 描画ループ（上から下へ、行ごとに配置）
         for r_idx, row_items in enumerate(rows_layout):
             y_offset = drawing_height - (r_idx + 1) * 185 - 10
             start_x = 15
@@ -301,7 +300,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
                 p_lower = p["部材名"]
                 
                 if item["type"] == "groove":
-                    # --- 溝あきカード（幅マイナス30%） ---
                     d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#fff8ee'), strokeColor=colors.HexColor('#d9822b'), strokeWidth=1, strokeDashArray=[2,2]))
                     d.add(String(start_x + 4, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#b75800')))
                     d.add(String(start_x + 4, y_offset + 130, f"仕上寸法:", fontName=font_name, fontSize=5.5, fillColor=colors.HexColor('#666')))
@@ -314,7 +312,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
                     d.add(String(start_x + 4, y_offset + 44, f"全判:{p['全判枚数']}枚", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#006')))
                     
                 elif item["type"] == "back":
-                    # --- 背ボールカード（幅30%減） ---
                     d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#eaf4fc'), strokeColor=colors.HexColor('#004080'), strokeWidth=1.2))
                     d.add(String(start_x + 5, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#000')))
                     d.add(String(start_x + 5, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#444')))
@@ -330,7 +327,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
                     d.add(String(start_x + 5, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#006')))
                     
                 elif item["type"] == "core":
-                    # --- 芯ボールカード（幅20%減：約100pt） ---
                     d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#f5f5f5'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
                     d.add(String(start_x + 6, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8.5, fillColor=colors.HexColor('#000')))
                     d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#444')))
@@ -346,7 +342,6 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
                     d.add(String(start_x + 6, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
                     
                 else:
-                    # --- 通常部材カード ---
                     d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#fafafa'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
                     d.add(String(start_x + 8, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#000')))
                     d.add(String(start_x + 8, y_offset + 130, f"寸法: {p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#444')))
@@ -366,9 +361,10 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         story.append(d)
         story.append(Spacer(1, 15))
         
-        # テーブル構築（ヘッダーフォント・色変更を適用）
+        # --- テーブル構築（銘柄（表紙クロス）列を備考の手前に追加） ---
         table_data = [[
             Paragraph("<b>部材名</b>", table_header_style), 
+            Paragraph("<b>銘柄(表紙クロス)</b>", table_header_style), 
             Paragraph("<b>備考</b>", table_header_style), 
             Paragraph("<b>1冊面数</b>", table_header_center), 
             Paragraph("<b>計算サイズ (W×H)</b>", table_header_style), 
@@ -381,6 +377,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         for p in calculated_rows:
             table_data.append([
                 Paragraph(p["部材名"], normal_style),
+                Paragraph(p["銘柄"], normal_style),
                 Paragraph(p["備考"], normal_style),
                 Paragraph(str(p["面数"]), center_style),
                 Paragraph(f"{p['サイズ_W']}mm × {p['サイズ_H']}mm", normal_style),
@@ -394,6 +391,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         table_data.append([
             Paragraph("<b>合計</b>", center_style),
             Paragraph("", normal_style),
+            Paragraph("", normal_style),
             Paragraph("", center_style),
             Paragraph("", normal_style),
             Paragraph("", normal_style),
@@ -402,13 +400,14 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
             Paragraph(f"<b>{total_sheets_sum}枚</b>", center_style),
         ])
             
-        t = Table(table_data, colWidths=[80, 60, 45, 95, 80, 60, 60, 60])
+        # 9列になったため、カラム幅を調整（合計幅 540）
+        t = Table(table_data, colWidths=[70, 75, 55, 45, 85, 65, 50, 47, 48])
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c3e50')), # ヘッダー背景を落ち着いたダークネイビーに変更
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c3e50')),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
             ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#f0f0f0')),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
-            ('PADDING', (0,0), (-1,-1), 5),
+            ('PADDING', (0,0), (-1,-1), 4),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
         story.append(t)
@@ -416,7 +415,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         doc.build(story)
         pdf_bytes = buffer.getvalue()
         
-        st.success("✨ 芯ボール幅-20%・溝あき幅-30%・およびテーブルヘッダーフォント・デザインのカスタマイズ反映が完了しました！")
+        st.success("✨ 「銘柄（表紙クロス）」列の追加＆CSV柄名の自動読み込みを反映した発注書PDFの生成が完了しました！")
         st.download_button(
             label="📥 【最新完全版】発注書PDFをダウンロードする",
             data=pdf_bytes,
