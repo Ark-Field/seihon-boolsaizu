@@ -53,15 +53,17 @@ if os.path.exists(font_filename):
 
 with st.sidebar:
     st.header("📂 確定版CSVデータ読込")
-    uploaded_file = st.file_uploader("@pocket出力CSVを選択", type=["csv"], help="受注番号CO,書名,必要数量...,部材名(芯ボール,背ボール,溝あき等),柄名(銘柄),備考等を含むCSV")
+    uploaded_file = st.file_uploader("@pocket出力CSVを選択", type=["csv"], help="受注番号CO,書名,必要数量...,納期（表紙）,AMPM（表紙）,納期（箔押）,AMPM（箔押）,柄名(銘柄)等を含むCSV")
 
 default_order_id = "260543"
 default_book_title = "詩画集①"
 default_quantity = 1060
 default_supplier_cover = "㈱博勝堂"
-default_due_cover = "2026/10/14"
+default_due_cover = "2026-10-14"
+default_ampm_cover = "AM"
 default_supplier_foil = "丸栄有限会社"
-default_due_foil = "2026/10/14"
+default_due_foil = "2026-10-14"
+default_ampm_foil = "AM"
 default_delivery_to = "㈱博勝堂"
 default_hon_h = 182.0
 default_hon_w = 128.0
@@ -70,9 +72,9 @@ default_zenpan_w = 800.0
 
 default_parts_data = [
     {"部材名": "芯ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 1},
-    {"部材名": "溝あき", "銘柄": "", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 9},
+    {"部材名": "溝あき", "銘柄": "", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 4},
     {"部材名": "背ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": 0.0, "固定幅【背】": 12.0, "レコードID": 2},
-    {"部材名": "溝あき", "銘柄": "", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 9},
+    {"部材名": "溝あき", "銘柄": "", "備考": "", "１冊面数": 0, "天地サイズ+-": 0.0, "左右サイズ+-": 0.0, "固定幅【背】": 0.0, "レコードID": 5},
     {"部材名": "芯ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 3},
 ]
 
@@ -97,8 +99,10 @@ if uploaded_file is not None:
             default_quantity = safe_int(first.get("必要数量（予備含む）", default_quantity), default_quantity)
             default_supplier_cover = str(first.get("表紙貼外注先", default_supplier_cover))
             default_due_cover = str(first.get("納期（表紙）", default_due_cover))
+            default_ampm_cover = str(first.get("AMPM（表紙）", default_ampm_cover))
             default_supplier_foil = str(first.get("表紙箔押外注先", default_supplier_foil))
             default_due_foil = str(first.get("納期（箔押）", default_due_foil))
+            default_ampm_foil = str(first.get("AMPM（箔押）", default_ampm_foil))
             default_delivery_to = str(first.get("納品先", default_delivery_to))
             default_hon_h = safe_float(first.get("天地", default_hon_h), default_hon_h)
             default_hon_w = safe_float(first.get("左右", default_hon_w), default_hon_w)
@@ -124,7 +128,7 @@ if uploaded_file is not None:
             if extracted_parts:
                 default_parts_data = extracted_parts
                 
-        st.sidebar.success("✅ 確定版CSVファイルを正常に読み込みました！（柄名＝銘柄読込対応）")
+        st.sidebar.success("✅ 確定版CSVファイルを正常に読み込みました！（AM/PM納品時間＆柄名対応）")
     except Exception as e:
         st.sidebar.error(f"CSV読込エラー: {e}")
 
@@ -137,8 +141,10 @@ with col1:
     quantity = st.number_input("必要数量（予備含む）", min_value=1, value=default_quantity)
     supplier_cover = st.text_input("表紙貼外注先", value=default_supplier_cover)
     due_cover = st.text_input("納期（表紙）", value=default_due_cover)
+    ampm_cover = st.text_input("AMPM（表紙）", value=default_ampm_cover)
     supplier_foil = st.text_input("表紙箔押外注先", value=default_supplier_foil)
     due_foil = st.text_input("納期（箔押）", value=default_due_foil)
+    ampm_foil = st.text_input("AMPM（箔押）", value=default_ampm_foil)
     delivery_to = st.text_input("納品先", value=default_delivery_to)
 
 with col2:
@@ -219,7 +225,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_name, fontSize=22, leading=26, alignment=1, textColor=colors.HexColor('#111'))
-        due_style = ParagraphStyle('DueStyle', parent=styles['Normal'], fontName=font_name, fontSize=14, leading=18, alignment=1, textColor=colors.HexColor('#c00'))
+        due_style = ParagraphStyle('DueStyle', parent=styles['Normal'], fontName=font_name, fontSize=13, leading=17, alignment=1, textColor=colors.HexColor('#c00'))
         normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13)
         center_style = ParagraphStyle('CenterStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13, alignment=1)
         
@@ -242,9 +248,10 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         story.append(Paragraph("<b>発 注 書</b>", title_style))
         story.append(Spacer(1, 6))
         
-        story.append(Paragraph(f"<b>【 表紙貼外注先 】</b> {supplier_cover} 様 ｜ <font color='#c00'><b>納期： {due_cover}</b></font>", due_style))
+        # 納期の後ろに納品時間（AMPM）を表示
+        story.append(Paragraph(f"<b>【 表紙貼外注先 】</b> {supplier_cover} 様 ｜ <font color='#c00'><b>納期： {due_cover} ({ampm_cover})</b></font>", due_style))
         story.append(Spacer(1, 4))
-        story.append(Paragraph(f"<b>【 表紙箔押外注先 】</b> {supplier_foil} 様 ｜ <font color='#c00'><b>納期： {due_foil}</b></font>", due_style))
+        story.append(Paragraph(f"<b>【 表紙箔押外注先 】</b> {supplier_foil} 様 ｜ <font color='#c00'><b>納期： {due_foil} ({ampm_foil})</b></font>", due_style))
         story.append(Spacer(1, 8))
         
         story.append(Paragraph(f"<b>納品先:</b> {delivery_to} 様 ｜ <b>受注番号:</b> {order_id} ｜ <b>書名:</b> {book_title}", normal_style))
@@ -329,99 +336,4 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
                 elif item["type"] == "core":
                     d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#f5f5f5'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
                     d.add(String(start_x + 6, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8.5, fillColor=colors.HexColor('#000')))
-                    d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#444')))
-                    
-                    mini_rect_w = 42
-                    mini_rect_h = 35
-                    mini_x = start_x + (box_w - mini_rect_w) / 2
-                    mini_y = y_offset + 82
-                    d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
-                    d.add(String(mini_x + 4, mini_y + 13, f"{p['面取り数']}面取", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#c00')))
-                    
-                    d.add(String(start_x + 6, y_offset + 64, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
-                    d.add(String(start_x + 6, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
-                    
-                else:
-                    d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#fafafa'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
-                    d.add(String(start_x + 8, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#000')))
-                    d.add(String(start_x + 8, y_offset + 130, f"寸法: {p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#444')))
-                    
-                    mini_rect_w = 50
-                    mini_rect_h = 35
-                    mini_x = start_x + (box_w - mini_rect_w) / 2
-                    mini_y = y_offset + 82
-                    d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
-                    d.add(String(mini_x + 6, mini_y + 13, f"{p['面取り数']}面取", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#c00')))
-                    
-                    d.add(String(start_x + 8, y_offset + 64, f"仕上枚数: {p['仕上枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#004')))
-                    d.add(String(start_x + 8, y_offset + 44, f"全判枚数: {p['全判枚数']}枚", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#006')))
-                
-                start_x += box_w + 10
-                
-        story.append(d)
-        story.append(Spacer(1, 15))
-        
-        # --- テーブル構築（銘柄（表紙クロス）列を備考の手前に追加） ---
-        table_data = [[
-            Paragraph("<b>部材名</b>", table_header_style), 
-            Paragraph("<b>銘柄(表紙クロス)</b>", table_header_style), 
-            Paragraph("<b>備考</b>", table_header_style), 
-            Paragraph("<b>1冊面数</b>", table_header_center), 
-            Paragraph("<b>計算サイズ (W×H)</b>", table_header_style), 
-            Paragraph("<b>全判サイズ</b>", table_header_style), 
-            Paragraph("<b>面取り数</b>", table_header_center), 
-            Paragraph("<b>仕上枚数</b>", table_header_center), 
-            Paragraph("<b>全判枚数</b>", table_header_center)
-        ]]
-        
-        for p in calculated_rows:
-            table_data.append([
-                Paragraph(p["部材名"], normal_style),
-                Paragraph(p["銘柄"], normal_style),
-                Paragraph(p["備考"], normal_style),
-                Paragraph(str(p["面数"]), center_style),
-                Paragraph(f"{p['サイズ_W']}mm × {p['サイズ_H']}mm", normal_style),
-                Paragraph(f"{zenpan_w}mm × {zenpan_h}mm", normal_style),
-                Paragraph("-" if p["is_groove"] else f"{p['面取り数']}面/枚", center_style),
-                Paragraph(f"{p['仕上枚数']}枚", center_style),
-                Paragraph(f"<b>{p['全判枚数']}枚</b>", center_style),
-            ])
-            
-        # 合計行
-        table_data.append([
-            Paragraph("<b>合計</b>", center_style),
-            Paragraph("", normal_style),
-            Paragraph("", normal_style),
-            Paragraph("", center_style),
-            Paragraph("", normal_style),
-            Paragraph("", normal_style),
-            Paragraph("", center_style),
-            Paragraph(f"<b>{total_pieces_sum}枚</b>", center_style),
-            Paragraph(f"<b>{total_sheets_sum}枚</b>", center_style),
-        ])
-            
-        # 9列になったため、カラム幅を調整（合計幅 540）
-        t = Table(table_data, colWidths=[70, 75, 55, 45, 85, 65, 50, 47, 48])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c3e50')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#f0f0f0')),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
-            ('PADDING', (0,0), (-1,-1), 4),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ]))
-        story.append(t)
-        
-        doc.build(story)
-        pdf_bytes = buffer.getvalue()
-        
-        st.success("✨ 「銘柄（表紙クロス）」列の追加＆CSV柄名の自動読み込みを反映した発注書PDFの生成が完了しました！")
-        st.download_button(
-            label="📥 【最新完全版】発注書PDFをダウンロードする",
-            data=pdf_bytes,
-            file_name=f"order_sheet_{order_id}.pdf",
-            mime="application/pdf"
-        )
-        
-    except Exception as pdf_err:
-        st.error(f"PDF生成中にエラーが発生しました: {pdf_err}")
+                    d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#44
