@@ -181,7 +181,7 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
             mentori1 = cols1 * rows1
             
             cols2 = int(zenpan_w // h) if h > 0 else 0
-            rows2 = int(zenpan_h // w) if w > 0 else 0
+            rows2 = int(zenpan_h // w) if h > 0 else 0
             mentori2 = cols2 * rows2
             
             max_mentori = max(mentori1, mentori2)
@@ -233,49 +233,102 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         story.append(Paragraph(f"<b>必要部数:</b> {quantity}部 ｜ <b>全判規格:</b> {zenpan_w}mm × {zenpan_h}mm ｜ <b>本文サイズ:</b> {hon_w}mm × {hon_h}mm", normal_style))
         story.append(Spacer(1, 10))
         
-        # 図解セクション：部材図解 ＆ 溝あき数値表示
-        story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 溝あき数値表示</b>", normal_style))
+        # --- 図解セクション：部材数に応じた【マルチ行（自動改行）対応】 ---
+        story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 溝あき数値表示（マルチ行自動改行対応）</b>", normal_style))
         story.append(Spacer(1, 4))
         
-        d = Drawing(540, 200)
-        start_x = 15
-        for i, p in enumerate(calculated_rows):
+        # まず各部材のカード幅を事前判定して必要行数を計算
+        card_metrics = []
+        for p in calculated_rows:
+            p_lower = p["部材名"]
             if p["is_groove"]:
-                # --- 溝あき：間に挟まるスリムな数値・テキスト表示カード ---
-                box_w = 90
-                box_h = 175
-                d.add(Rect(start_x, 15, box_w, box_h, fillColor=colors.HexColor('#fff8ee'), strokeColor=colors.HexColor('#d9822b'), strokeWidth=1, strokeDashArray=[2,2]))
-                d.add(String(start_x + 6, 153, f"【{p['部材名']}】", fontName=font_name, fontSize=8.5, fillColor=colors.HexColor('#b75800')))
-                d.add(String(start_x + 6, 134, f"仕上寸法:", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#666')))
-                d.add(String(start_x + 6, 120, f"{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#222')))
-                
-                d.add(Line(start_x + 6, 110, start_x + box_w - 6, 110, strokeColor=colors.HexColor('#f0d0a0'), strokeWidth=0.5))
-                
-                d.add(String(start_x + 6, 92, "※数値・活字表示", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#888')))
-                d.add(String(start_x + 6, 70, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
-                d.add(String(start_x + 6, 48, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
+                card_metrics.append({"w": 85, "h": 170, "type": "groove", "p": p})
+            elif "背ボール" in p_lower:
+                card_metrics.append({"w": int(125 * 0.7), "h": 170, "type": "back", "p": p})
             else:
-                # --- 通常部材（芯ボール・背ボール）：ビジュアル図解付きカード ---
-                box_w = 125
-                box_h = 175
-                d.add(Rect(start_x, 15, box_w, box_h, fillColor=colors.HexColor('#fafafa' if i%2==0 else '#eef2f7'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
-                d.add(String(start_x + 8, 153, f"【{p['部材名']}】", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#000')))
-                d.add(String(start_x + 8, 134, f"寸法: {p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#444')))
-                
-                # ミニパーツビジュアル図解ボックス
-                mini_rect_w = 50
-                mini_rect_h = 35
-                mini_x = start_x + (box_w - mini_rect_w) / 2
-                mini_y = 88
-                d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
-                d.add(String(mini_x + 6, mini_y + 13, f"{p['面取り数']}面取", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#c00')))
-                
-                d.add(String(start_x + 8, 68, f"仕上枚数: {p['仕上枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#004')))
-                d.add(String(start_x + 8, 48, f"全判枚数: {p['全判枚数']}枚", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#006')))
+                card_metrics.append({"w": 125, "h": 170, "type": "normal", "p": p})
+        
+        # レイアウト計算（最大幅 530pt 以内で自動折り返し）
+        max_row_w = 530
+        rows_layout = []
+        current_row = []
+        current_w = 0
+        
+        for item in card_metrics:
+            spacing = 10 if current_row else 0
+            if current_w + item["w"] + spacing > max_row_w and current_row:
+                rows_layout.append(current_row)
+                current_row = [item]
+                current_w = item["w"]
+            else:
+                current_row.append(item)
+                current_w += item["w"] + spacing
+        if current_row:
+            rows_layout.append(current_row)
             
-            start_x += box_w + 10
-            if start_x > 500:
-                break
+        num_drawing_rows = len(rows_layout)
+        drawing_height = max(190, num_drawing_rows * 185 + 15)
+        
+        d = Drawing(540, drawing_height)
+        
+        # 描画ループ（上から下へ、行ごとに配置）
+        for r_idx, row_items in enumerate(rows_layout):
+            # 描画Y座標は上から順に配置（ReportLabのDrawingは下原点のため計算）
+            y_offset = drawing_height - (r_idx + 1) * 185 - 10
+            start_x = 15
+            
+            for item in row_items:
+                p = item["p"]
+                box_w = item["w"]
+                box_h = 170
+                p_lower = p["部材名"]
+                
+                if item["type"] == "groove":
+                    # --- 溝あきカード ---
+                    d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#fff8ee'), strokeColor=colors.HexColor('#d9822b'), strokeWidth=1, strokeDashArray=[2,2]))
+                    d.add(String(start_x + 5, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#b75800')))
+                    d.add(String(start_x + 5, y_offset + 130, f"仕上寸法:", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#666')))
+                    d.add(String(start_x + 5, y_offset + 116, f"{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#222')))
+                    
+                    d.add(Line(start_x + 5, y_offset + 106, start_x + box_w - 5, y_offset + 106, strokeColor=colors.HexColor('#f0d0a0'), strokeWidth=0.5))
+                    
+                    d.add(String(start_x + 5, y_offset + 88, "※数値・活字表示", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#888')))
+                    d.add(String(start_x + 5, y_offset + 66, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#004')))
+                    d.add(String(start_x + 5, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#006')))
+                    
+                elif item["type"] == "back":
+                    # --- 背ボールカード（幅30%減） ---
+                    d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#eaf4fc'), strokeColor=colors.HexColor('#004080'), strokeWidth=1.2))
+                    d.add(String(start_x + 6, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8.5, fillColor=colors.HexColor('#000')))
+                    d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#444')))
+                    
+                    mini_rect_w = 28
+                    mini_rect_h = 35
+                    mini_x = start_x + (box_w - mini_rect_w) / 2
+                    mini_y = y_offset + 82
+                    d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
+                    d.add(String(mini_x + 2, mini_y + 13, f"{p['面取り数']}面", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#c00')))
+                    
+                    d.add(String(start_x + 6, y_offset + 64, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
+                    d.add(String(start_x + 6, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
+                    
+                else:
+                    # --- 通常部材カード（芯ボールなど） ---
+                    d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#fafafa'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
+                    d.add(String(start_x + 8, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#000')))
+                    d.add(String(start_x + 8, y_offset + 130, f"寸法: {p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#444')))
+                    
+                    mini_rect_w = 50
+                    mini_rect_h = 35
+                    mini_x = start_x + (box_w - mini_rect_w) / 2
+                    mini_y = y_offset + 82
+                    d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
+                    d.add(String(mini_x + 6, mini_y + 13, f"{p['面取り数']}面取", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#c00')))
+                    
+                    d.add(String(start_x + 8, y_offset + 64, f"仕上枚数: {p['仕上枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#004')))
+                    d.add(String(start_x + 8, y_offset + 44, f"全判枚数: {p['全判枚数']}枚", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#006')))
+                
+                start_x += box_w + 10
                 
         story.append(d)
         story.append(Spacer(1, 15))
@@ -319,9 +372,9 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
         doc.build(story)
         pdf_bytes = buffer.getvalue()
         
-        st.success("✨ 芯ボール・背ボールのビジュアル図解と、間に挟まる溝あきの数値活字表示を反映したPDFが完成しました！")
+        st.success("✨ 部材や面数が増えても自動で綺麗に折り返し（改行）する【マルチ行対応】発注書PDFの生成が完了しました！")
         st.download_button(
-            label="📥 【最新完全版】発注書PDFをダウンロードする",
+            label="📥 【マルチ行対応・完全版】発注書PDFをダウンロードする",
             data=pdf_bytes,
             file_name=f"order_sheet_{order_id}.pdf",
             mime="application/pdf"
