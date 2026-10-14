@@ -336,4 +336,98 @@ if st.button("🖨️ 発注書PDFを生成する", type="primary"):
                 elif item["type"] == "core":
                     d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#f5f5f5'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
                     d.add(String(start_x + 6, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8.5, fillColor=colors.HexColor('#000')))
-                    d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#44
+                    d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#444')))
+                    
+                    mini_rect_w = 42
+                    mini_rect_h = 35
+                    mini_x = start_x + (box_w - mini_rect_w) / 2
+                    mini_y = y_offset + 82
+                    d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
+                    d.add(String(mini_x + 4, mini_y + 13, f"{p['面取り数']}面取", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#c00')))
+                    
+                    d.add(String(start_x + 6, y_offset + 64, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
+                    d.add(String(start_x + 6, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
+                    
+                else:
+                    d.add(Rect(start_x, y_offset, box_w, box_h, fillColor=colors.HexColor('#fafafa'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
+                    d.add(String(start_x + 8, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#000')))
+                    d.add(String(start_x + 8, y_offset + 130, f"寸法: {p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#444')))
+                    
+                    mini_rect_w = 50
+                    mini_rect_h = 35
+                    mini_x = start_x + (box_w - mini_rect_w) / 2
+                    mini_y = y_offset + 82
+                    d.add(Rect(mini_x, mini_y, mini_rect_w, mini_rect_h, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
+                    d.add(String(mini_x + 6, mini_y + 13, f"{p['面取り数']}面取", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#c00')))
+                    
+                    d.add(String(start_x + 8, y_offset + 64, f"仕上枚数: {p['仕上枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#004')))
+                    d.add(String(start_x + 8, y_offset + 44, f"全判枚数: {p['全判枚数']}枚", fontName=font_name, fontSize=9, fillColor=colors.HexColor('#006')))
+                
+                start_x += box_w + 10
+                
+        story.append(d)
+        story.append(Spacer(1, 15))
+        
+        # --- テーブル構築 ---
+        table_data = [[
+            Paragraph("<b>部材名</b>", table_header_style), 
+            Paragraph("<b>銘柄(表紙クロス)</b>", table_header_style), 
+            Paragraph("<b>備考</b>", table_header_style), 
+            Paragraph("<b>1冊面数</b>", table_header_center), 
+            Paragraph("<b>計算サイズ (W×H)</b>", table_header_style), 
+            Paragraph("<b>全判サイズ</b>", table_header_style), 
+            Paragraph("<b>面取り数</b>", table_header_center), 
+            Paragraph("<b>仕上枚数</b>", table_header_center), 
+            Paragraph("<b>全判枚数</b>", table_header_center)
+        ]]
+        
+        for p in calculated_rows:
+            table_data.append([
+                Paragraph(p["部材名"], normal_style),
+                Paragraph(p["銘柄"], normal_style),
+                Paragraph(p["備考"], normal_style),
+                Paragraph(str(p["面数"]), center_style),
+                Paragraph(f"{p['サイズ_W']}mm × {p['サイズ_H']}mm", normal_style),
+                Paragraph(f"{zenpan_w}mm × {zenpan_h}mm", normal_style),
+                Paragraph("-" if p["is_groove"] else f"{p['面取り数']}面/枚", center_style),
+                Paragraph(f"{p['仕上枚数']}枚", center_style),
+                Paragraph(f"<b>{p['全判枚数']}枚</b>", center_style),
+            ])
+            
+        # 合計行
+        table_data.append([
+            Paragraph("<b>合計</b>", center_style),
+            Paragraph("", normal_style),
+            Paragraph("", normal_style),
+            Paragraph("", center_style),
+            Paragraph("", normal_style),
+            Paragraph("", center_style),
+            Paragraph("", center_style),
+            Paragraph(f"<b>{total_pieces_sum}枚</b>", center_style),
+            Paragraph(f"<b>{total_sheets_sum}枚</b>", center_style),
+        ])
+            
+        t = Table(table_data, colWidths=[70, 75, 55, 45, 85, 65, 50, 47, 48])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c3e50')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#f0f0f0')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
+            ('PADDING', (0,0), (-1,-1), 4),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        story.append(t)
+        
+        doc.build(story)
+        pdf_bytes = buffer.getvalue()
+        
+        st.success("✨ 納期直後の納品時間（AM/PM）表示対応版発注書PDFの生成が完了しました！")
+        st.download_button(
+            label="📥 【最新完全版】発注書PDFをダウンロードする",
+            data=pdf_bytes,
+            file_name=f"order_sheet_{order_id}.pdf",
+            mime="application/pdf"
+        )
+        
+    except Exception as pdf_err:
+        st.error(f"PDF生成中にエラーが発生しました: {pdf_err}")
