@@ -17,6 +17,7 @@ import openpyxl
 # ページ基本設定
 st.set_page_config(page_title="芯ボール・背ボール・溝あき対応 発注書・図面自動作成システム", layout="wide")
 
+# カスタムスタイル（ダークネイビー調）
 st.markdown("""
 <style>
     .stButton>button {
@@ -32,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリID: 50）API連携により、発注番号を直接受け取り、明細・銘柄を自動紐付けして発注書PDFおよびExcel集計表を生成します。")
+st.markdown("💡 @pocket（アプリID: 50）API連携により、発注番号を直接受け取り、明細・柄名を自動紐付けして発注書PDFおよびExcel集計表を生成します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -72,7 +73,7 @@ if os.path.exists(font_filename):
 query_params = st.query_params
 url_order_id = query_params.get("order_id", "")
 
-# デフォルト値
+# デフォルト値の初期化
 default_order_id = url_order_id if url_order_id else "JS260543"
 default_book_title = "詩画集①"
 default_quantity = 1060
@@ -100,7 +101,7 @@ default_parts_data = [
 api_fetched_data = None
 if url_order_id:
     try:
-        api_key = st.secrets["general"]["AT_POCKET_API_KEY"]
+        api_key = st.secrets["app50"]["api_key"]
         api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
         headers = {
             "X-At-Pocket-API-Key": api_key,
@@ -153,20 +154,19 @@ if api_fetched_data:
     default_ampm_foil = str(get_field_val(api_fetched_data, "field-63", default_ampm_foil))
     default_delivery_to = str(get_field_val(api_fetched_data, "field-69", default_delivery_to))
 
-    # --- field-31（柄名・種目データ）および field-64（部材明細）の結合・抽出処理 ---
+    # --- field-31（柄名・種目）と field-64（部材明細）の結合・抽出処理 ---
     try:
-        # 1. field-31 から「種目」と「内容」の辞書（マッピング）を作成
+        # 1. field-31 から「種目」(field-31_6) と「内容」(field-31_1) の辞書を作成
         brand_mapping = {}
         f31_data = api_fetched_data.get("field-31", [])
         if isinstance(f31_data, list):
             for row in f31_data:
-                # 種目(field-31_6) と 内容(field-31_1)
                 kind = str(get_field_val(row, "field-31_6", "")).strip()
                 content = str(get_field_val(row, "field-31_1", "")).strip()
                 if kind:
                     brand_mapping[kind] = content
 
-        # 2. field-64（部材明細）を読み込み、指定された条件でブランド名を自動流し込み
+        # 2. field-64（部材明細）を読み込み、部材名(field-64_2)と種目が一致すれば銘柄に反映
         f64_data = api_fetched_data.get("field-64", [])
         if isinstance(f64_data, list) and len(f64_data) > 0:
             extracted_parts = []
@@ -176,7 +176,6 @@ if api_fetched_data:
                     continue
                 is_groove = "溝あき" in b_name
                 
-                # 種目（部材名）が一致すれば field-31 の内容（銘柄/柄名）を自動取得
                 matched_brand = brand_mapping.get(b_name, "")
                 
                 extracted_parts.append({
