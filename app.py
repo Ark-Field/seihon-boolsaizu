@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50連携）：データをセッション保持するため、ボタン操作でデータが消えることはありません。")
+st.markdown("💡 @pocket（アプリ50 ＆ アプリ29 2段階連携）：親受注番号を基にアプリ29の明細データを画面に表示します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -72,6 +72,10 @@ if os.path.exists(font_filename):
 # --- Session State の初期化 ---
 if "loaded_data" not in st.session_state:
     st.session_state.loaded_data = None
+if "app29_data" not in st.session_state:
+    st.session_state.app29_data = None
+if "parent_order_id" not in st.session_state:
+    st.session_state.parent_order_id = ""
 if "order_id" not in st.session_state:
     st.session_state.order_id = ""
 if "book_title" not in st.session_state:
@@ -102,6 +106,8 @@ if "zenpan_w" not in st.session_state:
     st.session_state.zenpan_w = 800.0
 if "parts_rows" not in st.session_state:
     st.session_state.parts_rows = []
+if "app29_raw_subtable" not in st.session_state:
+    st.session_state.app29_raw_subtable = []
 
 def get_field_val(rec, field_id, default=""):
     if not rec or field_id not in rec:
@@ -111,92 +117,161 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- APIデータ取得＆セッション保存関数 ---
+# --- APIデータ取得＆アプリ29連携関数 ---
 def fetch_and_store_pocket_data(order_num):
     try:
+        # 1. アプリ50からデータを取得
         api_key_50 = st.secrets["app50"]["api_key"]
         url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
         headers_50 = {"X-At-Pocket-API-Key": api_key_50, "Content-Type": "application/json"}
         
-        response = requests.get(url_50, headers=headers_50, timeout=30)
-        if response.status_code == 200:
-            records = response.json().get("records", [])
+        response_50 = requests.get(url_50, headers=headers_50, timeout=30)
+        if response_50.status_code == 200:
+            records_50 = response_50.json().get("records", [])
             clean_target = str(order_num).replace("JS", "").strip()
             
-            target_rec = None
-            for rec in records:
+            target_rec_50 = None
+            for rec in records_50:
                 inner_rec = rec.get("record", rec)
                 f55 = str(get_field_val(inner_rec, "field-55")).strip()
                 if clean_target in [f55, f55.replace("JS", "")]:
-                    target_rec = rec
+                    target_rec_50 = rec
                     break
             
-            if not target_rec:
-                for rec in records:
+            if not target_rec_50:
+                for rec in records_50:
                     inner_rec = rec.get("record", rec)
                     for k, v in inner_rec.items():
                         v_str = str(v.get("value", v) if isinstance(v, dict) else v)
                         if clean_target and clean_target in v_str.replace("JS", "").strip():
-                            target_rec = rec
+                            target_rec_50 = rec
                             break
-                    if target_rec:
+                    if target_rec_50:
                         break
             
-            if target_rec:
-                st.session_state.loaded_data = target_rec
-                r = target_rec.get("record", target_rec)
+            if target_rec_50:
+                st.session_state.loaded_data = target_rec_50
+                r50 = target_rec_50.get("record", target_rec_50)
                 
-                st.session_state.order_id = str(get_field_val(r, "field-55", order_num))
-                st.session_state.book_title = str(get_field_val(r, "field-24", ""))
-                st.session_state.quantity = safe_int(get_field_val(r, "field-70", get_field_val(r, "field-25", 0)), 0)
+                st.session_state.order_id = str(get_field_val(r50, "field-55", order_num))
+                # アプリ50の field-23 から「親受注番号」を取得
+                parent_id = str(get_field_val(r50, "field-23", "")).strip()
+                st.session_state.parent_order_id = parent_id
                 
-                st.session_state.hon_h = safe_float(get_field_val(r, "field-27", 0.0), 0.0)
-                st.session_state.hon_w = safe_float(get_field_val(r, "field-28", 0.0), 0.0)
-                st.session_state.zenpan_h = safe_float(get_field_val(r, "field-67", 1100.0), 1100.0)
-                st.session_state.zenpan_w = safe_float(get_field_val(r, "field-68", 800.0), 800.0)
+                st.session_state.book_title = str(get_field_val(r50, "field-24", ""))
+                st.session_state.quantity = safe_int(get_field_val(r50, "field-70", get_field_val(r50, "field-25", 0)), 0)
                 
-                st.session_state.delivery_to = str(get_field_val(r, "field-69", ""))
-                st.session_state.supplier_cover = str(get_field_val(r, "field-57", ""))
-                st.session_state.due_cover = str(get_field_val(r, "field-61", ""))
-                st.session_state.ampm_cover = str(get_field_val(r, "field-62", ""))
-                st.session_state.supplier_foil = str(get_field_val(r, "field-59", ""))
-                st.session_state.due_foil = str(get_field_val(r, "field-60", ""))
-                st.session_state.ampm_foil = str(get_field_val(r, "field-63", ""))
+                st.session_state.hon_h = safe_float(get_field_val(r50, "field-27", 0.0), 0.0)
+                st.session_state.hon_w = safe_float(get_field_val(r50, "field-28", 0.0), 0.0)
+                st.session_state.zenpan_h = safe_float(get_field_val(r50, "field-67", 1100.0), 1100.0)
+                st.session_state.zenpan_w = safe_float(get_field_val(r50, "field-68", 800.0), 800.0)
+                
+                st.session_state.delivery_to = str(get_field_val(r50, "field-69", ""))
+                st.session_state.supplier_cover = str(get_field_val(r50, "field-57", ""))
+                st.session_state.due_cover = str(get_field_val(r50, "field-61", ""))
+                st.session_state.ampm_cover = str(get_field_val(r50, "field-62", ""))
+                st.session_state.supplier_foil = str(get_field_val(r50, "field-59", ""))
+                st.session_state.due_foil = str(get_field_val(r50, "field-60", ""))
+                st.session_state.ampm_foil = str(get_field_val(r50, "field-63", ""))
 
-                # サブテーブル解析
-                parts = []
-                f64_raw = r.get("field-64", [])
-                if isinstance(f64_raw, dict):
-                    f64_raw = f64_raw.get("value", [])
-                    
-                if isinstance(f64_raw, list) and len(f64_raw) > 0:
-                    for sub_row in f64_raw:
-                        sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
-                        if not isinstance(sub_rec, dict):
-                            continue
+                # 2. 【アプリ29（親データ）】の取得処理
+                if parent_id:
+                    try:
+                        api_key_29 = st.secrets["app29"]["api_key"]
+                        url_29 = "https://app050.at-pocket.com/seihon02_bb/api/apps/29/records"
+                        headers_29 = {"X-At-Pocket-API-Key": api_key_29, "Content-Type": "application/json"}
                         
-                        def get_sub_val(key):
-                            val = sub_rec.get(key, "")
-                            if isinstance(val, dict):
-                                return val.get("value", "")
-                            return val if val is not None else ""
+                        response_29 = requests.get(url_29, headers=headers_29, timeout=30)
+                        if response_29.status_code == 200:
+                            records_29 = response_29.json().get("records", [])
+                            clean_parent = parent_id.replace("JS", "").strip()
+                            
+                            target_rec_29 = None
+                            for prec in records_29:
+                                prec_inner = prec.get("record", prec)
+                                f2 = str(get_field_val(prec_inner, "field-2", "")).strip()
+                                if clean_parent in [f2, f2.replace("JS", "")]:
+                                    target_rec_29 = prec
+                                    break
+                            
+                            if target_rec_29:
+                                st.session_state.app29_data = target_rec_29
+                                r29 = target_rec_29.get("record", target_rec_29)
+                                
+                                # アプリ29のサブテーブル field-31（材料部材明細）を解析
+                                f31_raw = r29.get("field-31", [])
+                                if isinstance(f31_raw, dict):
+                                    f31_raw = f31_raw.get("value", [])
+                                
+                                subtable_items = []
+                                parts = []
+                                if isinstance(f31_raw, list):
+                                    for sub_row in f31_raw:
+                                        sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
+                                        if not isinstance(sub_rec, dict):
+                                            continue
+                                        
+                                        def get_sub29_val(key):
+                                            val = sub_rec.get(key, "")
+                                            if isinstance(val, dict):
+                                                return val.get("value", "")
+                                            return val if val is not None else ""
 
-                        b_name = str(get_sub_val("field-64_2")).strip()
-                        if not b_name:
-                            continue
-                        
-                        is_groove = "溝あき" in b_name
-                        parts.append({
-                            "部材名": b_name,
-                            "銘柄": str(get_sub_val("field-64_1")).strip(),
-                            "備考": "",
-                            "１冊面数": 0 if is_groove else safe_int(get_sub_val("field-64_4"), 1),
-                            "天地サイズ+-": safe_float(get_sub_val("field-64_5"), 0.0),
-                            "左右サイズ+-": safe_float(get_sub_val("field-64_6"), 0.0),
-                            "固定幅【背】": safe_float(get_sub_val("field-64_7"), 0.0),
-                            "レコードID": safe_int(sub_row.get("recordSubId", 1), 1)
-                        })
-                st.session_state.parts_rows = parts
+                                        kind = str(get_sub29_val("field-31_6")).strip() # 種目 (芯ボール、背ボール、表紙など)
+                                        content = str(get_sub29_val("field-31_1")).strip() # 内容 (銘柄・柄名)
+                                        
+                                        subtable_items.append({"種目 (field-31_6)": kind, "内容 (field-31_1)": content})
+                                        
+                                        if kind:
+                                            is_groove = "溝あき" in kind
+                                            parts.append({
+                                                "部材名": kind,
+                                                "銘柄": content,
+                                                "備考": "",
+                                                "１冊面数": 0 if is_groove else 1,
+                                                "天地サイズ+-": 7.0 if "ボール" in kind else 0.0,
+                                                "左右サイズ+-": -3.5 if "芯ボール" in kind else 0.0,
+                                                "固定幅【背】": 10.0 if "背ボール" in kind else 0.0,
+                                                "レコードID": 1
+                                            })
+                                st.session_state.app29_raw_subtable = subtable_items
+                                if parts:
+                                    st.session_state.parts_rows = parts
+                    except Exception as e2:
+                        print(f"アプリ29取得エラー: {e2}")
+
+                # アプリ29から取得できなかった場合はアプリ50側のfield-64フォールバック
+                if not st.session_state.parts_rows:
+                    f64_raw = r50.get("field-64", [])
+                    if isinstance(f64_raw, dict):
+                        f64_raw = f64_raw.get("value", [])
+                    parts = []
+                    if isinstance(f64_raw, list):
+                        for sub_row in f64_raw:
+                            sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
+                            if not isinstance(sub_rec, dict):
+                                continue
+                            def get_sub_val(key):
+                                val = sub_rec.get(key, "")
+                                if isinstance(val, dict):
+                                    return val.get("value", "")
+                                return val if val is not None else ""
+                            b_name = str(get_sub_val("field-64_2")).strip()
+                            if not b_name:
+                                continue
+                            is_groove = "溝あき" in b_name
+                            parts.append({
+                                "部材名": b_name,
+                                "銘柄": str(get_sub_val("field-64_1")).strip(),
+                                "備考": "",
+                                "１冊面数": 0 if is_groove else safe_int(get_sub_val("field-64_4"), 1),
+                                "天地サイズ+-": safe_float(get_sub_val("field-64_5"), 0.0),
+                                "左右サイズ+-": safe_float(get_sub_val("field-64_6"), 0.0),
+                                "固定幅【背】": safe_float(get_sub_val("field-64_7"), 0.0),
+                                "レコードID": 1
+                            })
+                    st.session_state.parts_rows = parts
+
                 return True
     except Exception as e:
         print(f"API取得エラー: {e}")
@@ -209,10 +284,10 @@ with st.sidebar:
     search_button = st.button("APIからデータを取得する")
 
 if search_button and search_input:
-    with st.spinner(f"⏳ 受注番号「{search_input}」のデータを取得中..."):
+    with st.spinner(f"⏳ 受注番号「{search_input}」およびアプリ29親データを取得中..."):
         success = fetch_and_store_pocket_data(search_input)
         if success:
-            st.sidebar.success(f"🔗 受注番号: {search_input} のデータをロードしました！")
+            st.sidebar.success(f"🔗 データロード成功！（親ID: {st.session_state.parent_order_id}）")
             st.rerun()
         else:
             st.sidebar.warning(f"⚠️ アプリ50内に「{search_input}」が見つかりませんでした。")
@@ -220,6 +295,19 @@ if search_button and search_input:
 # --- 画面レイアウト ---
 if not st.session_state.loaded_data:
     st.info("ℹ️ サイドバーに受注番号を入力して **[APIからデータを取得する]** ボタンを押してください。")
+
+# --- ★ 追加：アプリ29（親データ）の取得状況と内容を画面に表示するプレビュー領域 ---
+if st.session_state.loaded_data:
+    with st.expander("🔗 【アプリ29 親データ連携プレビュー】（親受注番号: " + str(st.session_state.parent_order_id) + "）", expanded=True):
+        if st.session_state.app29_data:
+            st.success("✅ アプリ29（親レコード）との紐付け＆データ取得に成功しました！")
+            if st.session_state.app29_raw_subtable:
+                st.write("### 📋 アプリ29 サブテーブル（材料部材明細 `field-31`）の抽出データ:")
+                st.dataframe(pd.DataFrame(st.session_state.app29_raw_subtable), use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ アプリ29の親レコードは見つかりましたが、サブテーブル `field-31` が空またはデータがありません。")
+        else:
+            st.warning(f"⚠️ アプリ50の親受注番号「{st.session_state.parent_order_id}」に一致するレコードがアプリ29内で見つかりませんでした（アプリ50側の明細をフォールバック表示しています）。")
 
 col1, col2 = st.columns(2)
 
@@ -244,14 +332,13 @@ with col2:
     zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=st.session_state.zenpan_w)
 
 st.markdown("---")
-st.subheader("3. 読込済み部材明細（パーツリスト確認・編集）")
+st.subheader("3. 読込済み部材明細（アプリ29連動パーツリスト確認・編集）")
 
 df_parts_input = pd.DataFrame(st.session_state.parts_rows) if st.session_state.parts_rows else pd.DataFrame(columns=["部材名", "銘柄", "備考", "１冊面数", "天地サイズ+-", "左右サイズ+-", "固定幅【背】", "レコードID"])
 edited_parts = st.data_editor(df_parts_input, num_rows="dynamic", use_container_width=True)
 
 if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="primary"):
     if not st.session_state.loaded_data and order_id:
-        # まだロードされていない場合はその場で取得を試みる
         fetch_and_store_pocket_data(order_id)
 
     if edited_parts.empty or (len(edited_parts) == 1 and str(edited_parts.iloc[0]["部材名"]) == ""):
