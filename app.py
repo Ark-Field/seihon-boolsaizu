@@ -32,8 +32,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50 ＆ アプリ29 連携）：サイドバーから受注番号を指定してデータを取得してください。")
+st.title("📦 芯ボール・背ボール・溝あき対応 発注書作成")
+st.markdown("💡 DBpocket（）：サイドバーから受注番号を指定してデータを取得してください。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -276,7 +276,7 @@ def fetch_and_store_pocket_data(order_num):
 
 # --- サイドバー：手動検索機能 ---
 with st.sidebar:
-    st.header("🔍 @pocket（アプリ50）検索")
+    st.header("🔍 DBpocket（アプリ50）検索")
     search_input = st.text_input("受注番号を入力（例: 260543）", value=st.session_state.order_id)
     search_button = st.button("APIからデータを取得する")
 
@@ -319,11 +319,11 @@ with col2:
     zenpan_h = st.number_input("材料規格 全判天地 (mm)", min_value=0.0, value=st.session_state.zenpan_h)
     zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=st.session_state.zenpan_w)
 
-# --- アプリ29 部材一覧表（ヘッダー下・チェックボックス付き・内容のみ編集可能） ---
+# --- 部材一覧表（） ---
 app29_display_rows = []
 if st.session_state.loaded_data and st.session_state.app29_parts_rows:
     st.markdown("---")
-    st.subheader("📋 アプリ29 親データ：部材一覧表（材料部材明細 field-31）")
+    st.subheader("📋 ：部材一覧表（）")
     st.caption("💡 【PDF掲載】のチェックでPDF出力の有無を選択でき、項目【内容】のみ画面上で編集可能です。")
     
     df_app29_input = pd.DataFrame(st.session_state.app29_parts_rows)
@@ -482,16 +482,16 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             story.append(d)
             story.append(Spacer(1, 15))
 
-            # --- ★ 追加・移動：アプリ29の部材一覧表（図解の下部・チェックが入っているものだけ掲載） ---
+            # --- ★ 追加・移動：部材一覧表（図解の下部・チェックが入っているものだけ掲載） ---
             checked_app29_rows = [ar for ar in app29_display_rows if ar.get("PDF掲載", False)]
             if checked_app29_rows:
-                story.append(Paragraph("<b>■ 部材一覧表（アプリ29 材料部材明細）</b>", normal_style))
+                story.append(Paragraph("<b>■ 部材一覧表（材料部材明細）</b>", normal_style))
                 story.append(Spacer(1, 4))
                 app29_table_data = [[Paragraph("<b>種目</b>", table_header_style), Paragraph("<b>内容</b>", table_header_style)]]
                 for ar in checked_app29_rows:
                     app29_table_data.append([
                         Paragraph(str(ar.get("種目", "")), normal_style),
-                        Paragraph(str(ar.get("内容", "")), normal_style)
+                        Paragraph(str(ar.get("銘柄", "")), normal_style)
                     ])
                 t_app29 = Table(app29_table_data, colWidths=[200, 340])
                 t_app29.setStyle(TableStyle([
