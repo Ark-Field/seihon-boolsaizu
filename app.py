@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50単体）検証モード：アプリ50のデータのみで動作確認を行います。")
+st.markdown("💡 @pocket（アプリ50単体）サブテーブル強力解析モード：明細行（field-64）を確実に取得します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -73,11 +73,12 @@ if os.path.exists(font_filename):
 query_params = st.query_params
 url_order_id = query_params.get("order_id", "")
 
-# --- サイドバー：手動検索機能 ---
+# --- サイドバー：手動検索機能 ＆ デバッグ ---
 with st.sidebar:
     st.header("🔍 @pocket（アプリ50）検索")
     search_input = st.text_input("受注番号を入力（例: 260002）", value=url_order_id)
     search_button = st.button("APIからデータを取得する")
+    show_debug = st.checkbox("🐛 API生データ（field-64）を確認する", value=False)
 
 target_order_id = search_input if search_input else url_order_id
 
@@ -162,7 +163,7 @@ if search_button or url_order_id:
             except Exception as e:
                 st.sidebar.error(f"API取得時例外エラー: {e}")
 
-# --- アプリ50データのマッピング処理 ---
+# --- アプリ50データのマッピング処理 ＆ 超堅牢サブテーブル解析 ---
 if api_fetched_data:
     default_order_id = str(get_field_val(api_fetched_data, "field-55", get_field_val(api_fetched_data, "field-23", default_order_id)))
     default_book_title = str(get_field_val(api_fetched_data, "field-24", default_book_title))
@@ -179,31 +180,54 @@ if api_fetched_data:
     default_due_foil = str(get_field_val(api_fetched_data, "field-60", default_due_foil))
     default_ampm_foil = str(get_field_val(api_fetched_data, "field-63", default_ampm_foil))
 
-    # アプリ50内のサブテーブル（field-64）から部材明細を読み込む試み
+    # サイドバーでデバッグ表示が有効な場合、field-64の生データを表示
+    if show_debug:
+        st.sidebar.write("### 🐛 field-64 生データ構造子:")
+        st.sidebar.json(api_fetched_data.get("field-64", "データなし"))
+
+    # --- 超堅牢なサブテーブル（field-64）解析ロジック ---
     try:
-        f64_data = api_fetched_data.get("field-64", [])
-        if isinstance(f64_data, list) and len(f64_data) > 0:
+        f64_raw = api_fetched_data.get("field-64", [])
+        # もし辞書型でvalueの中にリストがある場合に対応
+        if isinstance(f64_raw, dict):
+            f64_raw = f64_raw.get("value", [])
+            
+        if isinstance(f64_raw, list) and len(f64_raw) > 0:
             extracted_parts = []
-            for row in f64_data:
-                b_name = str(get_field_val(row, "field-64_2", "")).strip()
+            for row in f64_raw:
+                # 行データ自体が辞書で value を持つ場合に対応
+                row_val = row.get("value", row) if isinstance(row, dict) else row
+                if not isinstance(row_val, dict):
+                    continue
+                
+                # 各セルの値を取り出すヘルパー関数（入れ子辞書・直値どちらも対応）
+                def get_cell(cell_key):
+                    cell = row_val.get(cell_key, "")
+                    if isinstance(cell, dict):
+                        return cell.get("value", "")
+                    return cell if cell is not None else ""
+
+                b_name = str(get_cell("field-64_2")).strip()
                 if not b_name:
                     continue
+                
                 is_groove = "溝あき" in b_name
                 
                 extracted_parts.append({
                     "部材名": b_name,
-                    "銘柄": str(get_field_val(row, "field-64_3", "NPCC#26")), # 銘柄フィールドがあれば
+                    "銘柄": str(get_cell("field-64_3")).strip(),
                     "備考": "",
-                    "１冊面数": 0 if is_groove else safe_int(get_field_val(row, "field-64_4", 1), 1),
-                    "天地サイズ+-": safe_float(get_field_val(row, "field-64_5", 0.0), 0.0),
-                    "左右サイズ+-": safe_float(get_field_val(row, "field-64_6", 0.0), 0.0),
-                    "固定幅【背】": safe_float(get_field_val(row, "field-64_7", 0.0), 0.0),
+                    "１冊面数": 0 if is_groove else safe_int(get_cell("field-64_4"), 1),
+                    "天地サイズ+-": safe_float(get_cell("field-64_5"), 0.0),
+                    "左右サイズ+-": safe_float(get_cell("field-64_6"), 0.0),
+                    "固定幅【背】": safe_float(get_cell("field-64_7"), 0.0),
                     "レコードID": 1
                 })
+            
             if extracted_parts:
                 default_parts_data = extracted_parts
     except Exception as e:
-        print(f"アプリ50 明細パースエラー: {e}")
+        st.sidebar.error(f"サブテーブル解析例外: {e}")
 
 # サイドバーでの手動CSV補助
 with st.sidebar:
