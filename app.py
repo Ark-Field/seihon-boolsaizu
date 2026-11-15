@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリID: 29）API連携テスト：受注番号（field-2）でデータを取得し、発注書PDFおよびExcel集計表を生成します。")
+st.markdown("💡 @pocket（アプリID: 29）API連携（1000件対策・30秒タイムアウト対応）：受注番号（field-2）でデータを取得し、発注書PDFおよびExcel集計表を生成します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -115,56 +115,58 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- @pocket APIからのデータ自動取得（アプリID: 29 / キー: field-2） ---
+# --- @pocket APIからのデータ自動取得（アプリID: 29 / タイムアウト30秒） ---
 if search_button or url_order_id:
     if not target_order_id:
         st.sidebar.warning("⚠️ 受注番号を入力してください。")
     else:
-        try:
-            api_key = st.secrets["app29"]["api_key"]
-            api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/29/records"
-            headers = {
-                "X-At-Pocket-API-Key": api_key,
-                "Content-Type": "application/json"
-            }
-            response = requests.get(api_url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                res_json = response.json()
-                records = res_json.get("records", [])
-                
-                clean_target = str(target_order_id).replace("JS", "").strip()
-                
-                # field-2（受注番号）が一致するレコードを探索
-                for rec in records:
-                    f2_val = str(get_field_val(rec, "field-2")).strip()
-                    clean_f2 = f2_val.replace("JS", "").strip()
+        with st.spinner("⏳ @pocketからデータを取得中..."):
+            try:
+                api_key = st.secrets["app29"]["api_key"]
+                api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/29/records"
+                headers = {
+                    "X-At-Pocket-API-Key": api_key,
+                    "Content-Type": "application/json"
+                }
+                # タイムアウトを30秒に設定
+                response = requests.get(api_url, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    res_json = response.json()
+                    records = res_json.get("records", [])
                     
-                    if clean_target in [clean_f2, f2_val]:
-                        api_fetched_data = rec
-                        break
-                
-                # 万が一見つからない場合は総当たりフォールバック
-                if not api_fetched_data:
+                    clean_target = str(target_order_id).replace("JS", "").strip()
+                    
+                    # field-2（受注番号）が一致するレコードを探索
                     for rec in records:
-                        found = False
-                        for k, v in rec.items():
-                            v_str = str(v.get("value", v) if isinstance(v, dict) else v)
-                            clean_v = v_str.replace("JS", "").strip()
-                            if clean_target and clean_target in clean_v:
-                                found = True
-                                break
-                        if found:
+                        f2_val = str(get_field_val(rec, "field-2")).strip()
+                        clean_f2 = f2_val.replace("JS", "").strip()
+                        
+                        if clean_target in [clean_f2, f2_val]:
                             api_fetched_data = rec
                             break
-                        
-                if api_fetched_data:
-                    st.sidebar.success(f"🔗 アプリ29から受注番号 **{target_order_id}** のデータを取得しました！")
+                    
+                    # 万が一見つからない場合は総当たりフォールバック
+                    if not api_fetched_data:
+                        for rec in records:
+                            found = False
+                            for k, v in rec.items():
+                                v_str = str(v.get("value", v) if isinstance(v, dict) else v)
+                                clean_v = v_str.replace("JS", "").strip()
+                                if clean_target and clean_target in clean_v:
+                                    found = True
+                                    break
+                            if found:
+                                api_fetched_data = rec
+                                break
+                            
+                    if api_fetched_data:
+                        st.sidebar.success(f"🔗 アプリ29から受注番号 **{target_order_id}** のデータを取得しました！")
+                    else:
+                        st.sidebar.warning(f"⚠️ アプリ29内に「{target_order_id}」のレコードが見つかりませんでした。")
                 else:
-                    st.sidebar.warning(f"⚠️ アプリ29内に「{target_order_id}」のレコードが見つかりませんでした。")
-            else:
-                st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
-        except Exception as e:
-            st.sidebar.error(f"API取得時例外エラー: {e}")
+                    st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
+            except Exception as e:
+                st.sidebar.error(f"API取得時例外エラー: {e}")
 
 # APIデータが取得できた場合のマッピング処理（アプリ29のフィールド定義に準拠）
 if api_fetched_data:
@@ -187,7 +189,6 @@ if api_fetched_data:
                 if kind:
                     brand_mapping[kind] = content
 
-        # 明細データ（アプリ29の field-31 または サブテーブル構造）
         if isinstance(f31_data, list) and len(f31_data) > 0:
             extracted_parts = []
             for row in f31_data:
