@@ -17,6 +17,7 @@ import openpyxl
 # ページ基本設定
 st.set_page_config(page_title="芯ボール・背ボール・溝あき対応 発注書・図面自動作成システム", layout="wide")
 
+# カスタムスタイル（ダークネイビー調）
 st.markdown("""
 <style>
     .stButton>button {
@@ -32,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリID: 50）API連携：発注番号を手入力またはURLから指定してデータを取得します。")
+st.markdown("💡 @pocket（アプリID: 29）API連携テスト：受注番号（field-2）でデータを取得し、発注書PDFおよびExcel集計表を生成します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -74,8 +75,8 @@ url_order_id = query_params.get("order_id", "")
 
 # --- サイドバー：手動検索機能 ---
 with st.sidebar:
-    st.header("🔍 @pocket レコード検索")
-    search_input = st.text_input("発注番号を入力（例: 260543 または JS260543）", value=url_order_id)
+    st.header("🔍 @pocket（アプリ29）検索")
+    search_input = st.text_input("受注番号を入力（例: 260543）", value=url_order_id)
     search_button = st.button("APIからデータを取得する")
 
 target_order_id = search_input if search_input else url_order_id
@@ -114,14 +115,14 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- @pocket APIからのデータ自動取得（アプリID: 50） ---
+# --- @pocket APIからのデータ自動取得（アプリID: 29 / キー: field-2） ---
 if search_button or url_order_id:
     if not target_order_id:
-        st.sidebar.warning("⚠️ 発注番号を入力してください。")
+        st.sidebar.warning("⚠️ 受注番号を入力してください。")
     else:
         try:
-            api_key = st.secrets["app50"]["api_key"]
-            api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
+            api_key = st.secrets["app29"]["api_key"]
+            api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/29/records"
             headers = {
                 "X-At-Pocket-API-Key": api_key,
                 "Content-Type": "application/json"
@@ -131,50 +132,51 @@ if search_button or url_order_id:
                 res_json = response.json()
                 records = res_json.get("records", [])
                 
-                # --- デバッグ用：取得できたレコードの field-23 の一覧をサイドバーに表示 ---
-                fetched_ids = []
-                for rec in records:
-                    val = get_field_val(rec, "field-23")
-                    fetched_ids.append(str(val))
-                
-                st.sidebar.info(f"ℹ️ API取得成功（全 {len(records)} 件）\n取得ID一覧: {', '.join(fetched_ids[:10])}")
-                # -------------------------------------------------------------
-
-                # 柔軟なマッチング（完全一致 または 「JS」の有無を吸収して比較）
                 clean_target = str(target_order_id).replace("JS", "").strip()
                 
+                # field-2（受注番号）が一致するレコードを探索
                 for rec in records:
-                    f23_val = str(get_field_val(rec, "field-23")).strip()
-                    clean_f23 = f23_val.replace("JS", "").strip()
+                    f2_val = str(get_field_val(rec, "field-2")).strip()
+                    clean_f2 = f2_val.replace("JS", "").strip()
                     
-                    if f23_val == str(target_order_id).strip() or clean_f23 == clean_target:
+                    if clean_target in [clean_f2, f2_val]:
                         api_fetched_data = rec
                         break
+                
+                # 万が一見つからない場合は総当たりフォールバック
+                if not api_fetched_data:
+                    for rec in records:
+                        found = False
+                        for k, v in rec.items():
+                            v_str = str(v.get("value", v) if isinstance(v, dict) else v)
+                            clean_v = v_str.replace("JS", "").strip()
+                            if clean_target and clean_target in clean_v:
+                                found = True
+                                break
+                        if found:
+                            api_fetched_data = rec
+                            break
                         
                 if api_fetched_data:
-                    st.sidebar.success(f"🔗 発注番号 **{target_order_id}** のデータを正常に取得しました！")
+                    st.sidebar.success(f"🔗 アプリ29から受注番号 **{target_order_id}** のデータを取得しました！")
                 else:
-                    st.sidebar.warning(f"⚠️ API内に「{target_order_id}」と一致するレコードが見つかりませんでした。")
+                    st.sidebar.warning(f"⚠️ アプリ29内に「{target_order_id}」のレコードが見つかりませんでした。")
             else:
                 st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
         except Exception as e:
             st.sidebar.error(f"API取得時例外エラー: {e}")
 
-# APIデータが取得できた場合のマッピング処理
+# APIデータが取得できた場合のマッピング処理（アプリ29のフィールド定義に準拠）
 if api_fetched_data:
-    default_order_id = str(get_field_val(api_fetched_data, "field-23", default_order_id))
-    default_book_title = str(get_field_val(api_fetched_data, "field-24", default_book_title))
-    default_quantity = safe_int(get_field_val(api_fetched_data, "field-25", default_quantity), default_quantity)
-    default_hon_h = safe_float(get_field_val(api_fetched_data, "field-27", default_hon_h), default_hon_h)
-    default_hon_w = safe_float(get_field_val(api_fetched_data, "field-28", default_hon_w), default_hon_w)
-    default_supplier_cover = str(get_field_val(api_fetched_data, "field-57", default_supplier_cover))
-    default_due_cover = str(get_field_val(api_fetched_data, "field-61", default_due_cover))
-    default_ampm_cover = str(get_field_val(api_fetched_data, "field-62", default_ampm_cover))
-    default_supplier_foil = str(get_field_val(api_fetched_data, "field-59", default_supplier_foil))
-    default_due_foil = str(get_field_val(api_fetched_data, "field-60", default_due_foil))
-    default_ampm_foil = str(get_field_val(api_fetched_data, "field-63", default_ampm_foil))
-    default_delivery_to = str(get_field_val(api_fetched_data, "field-69", default_delivery_to))
+    default_order_id = str(get_field_val(api_fetched_data, "field-2", default_order_id))
+    default_book_title = str(get_field_val(api_fetched_data, "field-9", default_book_title))
+    default_quantity = safe_int(get_field_val(api_fetched_data, "field-15", default_quantity), default_quantity)
+    default_hon_h = safe_float(get_field_val(api_fetched_data, "field-56", default_hon_h), default_hon_h)
+    default_hon_w = safe_float(get_field_val(api_fetched_data, "field-57", default_hon_w), default_hon_w)
+    default_supplier_cover = str(get_field_val(api_fetched_data, "field-49", default_supplier_cover))
+    default_supplier_foil = str(get_field_val(api_fetched_data, "field-51", default_supplier_foil))
 
+    # --- field-31（柄名・種目）と材料部材明細の結合処理 ---
     try:
         brand_mapping = {}
         f31_data = api_fetched_data.get("field-31", [])
@@ -185,24 +187,24 @@ if api_fetched_data:
                 if kind:
                     brand_mapping[kind] = content
 
-        f64_data = api_fetched_data.get("field-64", [])
-        if isinstance(f64_data, list) and len(f64_data) > 0:
+        # 明細データ（アプリ29の field-31 または サブテーブル構造）
+        if isinstance(f31_data, list) and len(f31_data) > 0:
             extracted_parts = []
-            for row in f64_data:
-                b_name = str(get_field_val(row, "field-64_2", "")).strip()
-                if not b_name:
+            for row in f31_data:
+                b_name = str(get_field_val(row, "field-31_6", "")).strip()
+                if not b_name or b_name not in ["芯ボール", "背ボール", "溝あき"]:
                     continue
                 is_groove = "溝あき" in b_name
-                matched_brand = brand_mapping.get(b_name, "")
+                matched_brand = str(get_field_val(row, "field-31_1", "")).strip()
                 
                 extracted_parts.append({
                     "部材名": b_name,
                     "銘柄": matched_brand,
                     "備考": "",
-                    "１冊面数": 0 if is_groove else safe_int(get_field_val(row, "field-64_4", 1), 1),
-                    "天地サイズ+-": safe_float(get_field_val(row, "field-64_5", 0.0), 0.0),
-                    "左右サイズ+-": safe_float(get_field_val(row, "field-64_6", 0.0), 0.0),
-                    "固定幅【背】": safe_float(get_field_val(row, "field-64_7", 0.0), 0.0),
+                    "１冊面数": 0 if is_groove else 1,
+                    "天地サイズ+-": 6.0 if "芯ボール" in b_name or "背ボール" in b_name else 0.0,
+                    "左右サイズ+-": -3.5 if "芯ボール" in b_name else (0.0 if "溝あき" in b_name else 0.0),
+                    "固定幅【背】": 12.0 if "背ボール" in b_name else 0.0,
                     "レコードID": 1
                 })
             if extracted_parts:
@@ -401,6 +403,35 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
         story.append(t)
+        
+        # --- 社判・担当者サイン欄の追加 ---
+        story.append(Spacer(1, 15))
+        sign_header_style = ParagraphStyle('SignHeader', parent=styles['Normal'], fontName=font_name, fontSize=8, alignment=1)
+        sign_cell_style = ParagraphStyle('SignCell', parent=styles['Normal'], fontName=font_name, fontSize=8, alignment=1)
+        
+        sign_data = [
+            [
+                Paragraph("<b>発注元</b>", sign_header_style),
+                Paragraph("<b>承認者</b>", sign_header_style),
+                Paragraph("<b>担当者</b>", sign_header_style),
+                Paragraph("<b>受注確認（外注先様）</b>", sign_header_style)
+            ],
+            [
+                Paragraph("<br/><br/>（社判）<br/><br/>", sign_cell_style),
+                Paragraph("<br/><br/><br/>", sign_cell_style),
+                Paragraph("<br/><br/><br/>", sign_cell_style),
+                Paragraph("<br/><br/><br/>", sign_cell_style)
+            ]
+        ]
+        sign_table = Table(sign_data, colWidths=[100, 80, 80, 280])
+        sign_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f0f0f0')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ]))
+        story.append(sign_table)
+        
         doc.build(story)
         pdf_bytes = buffer.getvalue()
         
@@ -420,7 +451,7 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
         wb.save(excel_buffer)
         excel_bytes = excel_buffer.getvalue()
         
-        st.success("✨ @pocketデータ連動に基づく発注書PDF および Excelの生成が完了しました！")
+        st.success("✨ アプリ29データ連動に基づく発注書PDF および Excelの生成が完了しました！")
         
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
