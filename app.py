@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50連携）：サイドバーから受注番号を指定してデータを取得してください。")
+st.markdown("💡 @pocket（アプリ50連携）：受注番号を入力してボタンを押すだけで、自動でデータ取得からPDF・Excel生成まで行えます。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -91,52 +91,46 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- アプリ50 APIからのデータ取得 ---
-if search_button or url_order_id:
-    if not target_order_id:
-        st.sidebar.warning("⚠️ 受注番号を入力してください。")
-    else:
-        with st.spinner("⏳ @pocket（アプリ50）からデータを取得中..."):
-            try:
-                api_key_50 = st.secrets["app50"]["api_key"]
-                url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
-                headers_50 = {"X-At-Pocket-API-Key": api_key_50, "Content-Type": "application/json"}
-                
-                response = requests.get(url_50, headers=headers_50, timeout=30)
-                if response.status_code == 200:
-                    records = response.json().get("records", [])
-                    clean_target = str(target_order_id).replace("JS", "").strip()
-                    
-                    for rec in records:
-                        inner_rec = rec.get("record", rec)
-                        f55 = str(get_field_val(inner_rec, "field-55")).strip()
-                        if clean_target in [f55, f55.replace("JS", "")]:
-                            api_fetched_data = rec
-                            break
-                    
-                    if not api_fetched_data:
-                        for rec in records:
-                            inner_rec = rec.get("record", rec)
-                            found = False
-                            for k, v in inner_rec.items():
-                                v_str = str(v.get("value", v) if isinstance(v, dict) else v)
-                                if clean_target and clean_target in v_str.replace("JS", "").strip():
-                                    found = True
-                                    break
-                            if found:
-                                api_fetched_data = rec
-                                break
-                    
-                    if api_fetched_data:
-                        st.sidebar.success(f"🔗 アプリ50（受注番号: {target_order_id}）を発見しました！")
-                    else:
-                        st.sidebar.warning(f"⚠️ アプリ50内に「{target_order_id}」のレコードが見つかりませんでした。")
-                else:
-                    st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
-            except Exception as e:
-                st.sidebar.error(f"API取得時例外エラー: {e}")
+# --- アプリ50 APIからのデータ取得関数 ---
+def fetch_pocket_data(order_num):
+    try:
+        api_key_50 = st.secrets["app50"]["api_key"]
+        url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
+        headers_50 = {"X-At-Pocket-API-Key": api_key_50, "Content-Type": "application/json"}
+        
+        response = requests.get(url_50, headers=headers_50, timeout=30)
+        if response.status_code == 200:
+            records = response.json().get("records", [])
+            clean_target = str(order_num).replace("JS", "").strip()
+            
+            for rec in records:
+                inner_rec = rec.get("record", rec)
+                f55 = str(get_field_val(inner_rec, "field-55")).strip()
+                if clean_target in [f55, f55.replace("JS", "")]:
+                    return rec
+            
+            # 見つからない場合は総当たり
+            for rec in records:
+                inner_rec = rec.get("record", rec)
+                for k, v in inner_rec.items():
+                    v_str = str(v.get("value", v) if isinstance(v, dict) else v)
+                    if clean_target and clean_target in v_str.replace("JS", "").strip():
+                        return rec
+    except Exception as e:
+        print(f"API取得エラー: {e}")
+    return None
 
-# --- 変数の初期化（データ未取得時は空にする） ---
+# --- 検索ボタンまたはURLパラメータがある場合の取得 ---
+if search_button or url_order_id:
+    if target_order_id:
+        with st.spinner("⏳ @pocket（アプリ50）からデータを取得中..."):
+            api_fetched_data = fetch_pocket_data(target_order_id)
+            if api_fetched_data:
+                st.sidebar.success(f"🔗 アプリ50（受注番号: {target_order_id}）を発見しました！")
+            else:
+                st.sidebar.warning(f"⚠️ アプリ50内に「{target_order_id}」のレコードが見つかりませんでした。")
+
+# --- 変数の初期化 ---
 v_order_id = target_order_id
 v_book_title = ""
 v_quantity = 0
@@ -153,31 +147,29 @@ v_zenpan_h = 1100.0
 v_zenpan_w = 800.0
 parts_rows = []
 
-# --- データが取得できている場合のみ値をセット ---
-if api_fetched_data:
-    r = api_fetched_data.get("record", api_fetched_data)
+# --- データ解析・マッピング ---
+def parse_record_data(rec):
+    global v_order_id, v_book_title, v_quantity, v_supplier_cover, v_due_cover, v_ampm_cover
+    global v_supplier_foil, v_due_foil, v_ampm_foil, v_delivery_to, v_hon_h, v_hon_w, v_zenpan_h, v_zenpan_w, parts_rows
     
-    v_order_id = str(get_field_val(r, "field-55", target_order_id))
+    r = rec.get("record", rec)
+    v_order_id = str(get_field_val(r, "field-55", v_order_id))
     v_book_title = str(get_field_val(r, "field-24", ""))
     v_quantity = safe_int(get_field_val(r, "field-70", get_field_val(r, "field-25", 0)), 0)
     
     v_hon_h = safe_float(get_field_val(r, "field-27", 0.0), 0.0)
     v_hon_w = safe_float(get_field_val(r, "field-28", 0.0), 0.0)
-    
     v_zenpan_h = safe_float(get_field_val(r, "field-67", 1100.0), 1100.0)
     v_zenpan_w = safe_float(get_field_val(r, "field-68", 800.0), 800.0)
     
     v_delivery_to = str(get_field_val(r, "field-69", ""))
-    
     v_supplier_cover = str(get_field_val(r, "field-57", ""))
     v_due_cover = str(get_field_val(r, "field-61", ""))
     v_ampm_cover = str(get_field_val(r, "field-62", ""))
-    
     v_supplier_foil = str(get_field_val(r, "field-59", ""))
     v_due_foil = str(get_field_val(r, "field-60", ""))
     v_ampm_foil = str(get_field_val(r, "field-63", ""))
 
-    # サブテーブル解析
     try:
         f64_raw = r.get("field-64", [])
         if isinstance(f64_raw, dict):
@@ -200,7 +192,6 @@ if api_fetched_data:
                     continue
                 
                 is_groove = "溝あき" in b_name
-                
                 parts_rows.append({
                     "部材名": b_name,
                     "銘柄": str(get_sub_val("field-64_1")).strip(),
@@ -212,11 +203,14 @@ if api_fetched_data:
                     "レコードID": safe_int(sub_row.get("recordSubId", 1), 1)
                 })
     except Exception as e:
-        st.sidebar.error(f"サブテーブル解析エラー: {e}")
+        print(f"サブテーブル解析エラー: {e}")
+
+if api_fetched_data:
+    parse_record_data(api_fetched_data)
 
 # --- 画面レイアウト ---
 if not api_fetched_data:
-    st.info("ℹ️ 【データ未取得】サイドバーから受注番号（例: 260001）を入力し、**[APIからデータを取得する]** ボタンを押してください。")
+    st.info("ℹ️ 受注番号をサイドバーに入力して検索するか、そのまま下のフォームに入力・PDFボタンを押してください。")
 
 col1, col2 = st.columns(2)
 
@@ -247,8 +241,15 @@ df_parts_input = pd.DataFrame(parts_rows) if parts_rows else pd.DataFrame(column
 edited_parts = st.data_editor(df_parts_input, num_rows="dynamic", use_container_width=True)
 
 if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="primary"):
-    if not api_fetched_data and not parts_rows:
-        st.warning("⚠️ データが取得されていません。先に受注番号を検索してデータを読み込んでください。")
+    # もしデータがまだ読み込まれていない状態でボタンが押された場合、入力されたorder_idでその場で自動取得を試みる
+    if not api_fetched_data and order_id:
+        with st.spinner(f"⏳ 受注番号「{order_id}」のデータを自動取得中..."):
+            api_fetched_data = fetch_pocket_data(order_id)
+            if api_fetched_data:
+                parse_record_data(api_fetched_data)
+
+    if not edited_parts.empty and edited_parts.iloc[0]["部材名"] == "":
+        st.warning("⚠️ 部材明細が空です。データを読み込むか明細を追加してください。")
     else:
         try:
             calculated_rows = []
@@ -257,7 +258,7 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             
             for _, row in edited_parts.iterrows():
                 p_name = str(row.get("部材名", ""))
-                if not p_name:
+                if not p_name or p_name == "nan":
                     continue
                 p_brand = str(row.get("銘柄", "")) if pd.notna(row.get("銘柄", "")) else ""
                 p_remark = str(row.get("備考", "")) if pd.notna(row.get("備考", "")) else ""
