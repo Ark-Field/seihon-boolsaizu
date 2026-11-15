@@ -2,15 +2,14 @@ import streamlit as st
 import pandas as pd
 import requests
 
-st.title("🔍 アプリ50・field-55 診断ツール")
+st.title("🔍 アプリ50 全フィールド値の総当たり調査ツール")
 
-# サイドバーでAPIキー設定
 with st.sidebar:
-    st.header("API設定確認")
-    target_id = st.text_input("探したい受注番号", value="260002")
-    check_btn = st.button("field-55 を検索する")
+    st.header("検索設定")
+    search_val = st.text_input("探したい番号（例: 260001）", value="260001")
+    run_diag = st.button("全フィールドから探す")
 
-if check_btn:
+if run_diag:
     try:
         api_key_50 = st.secrets["app50"]["api_key"]
         url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
@@ -21,29 +20,41 @@ if check_btn:
             records = response.json().get("records", [])
             st.success(f"アプリ50から {len(records)} 件のレコードを取得しました。")
             
-            # field-55 の一覧を調査
-            found_rec = None
-            all_f55_list = []
+            matched_records = []
+            all_fields_summary = []
             
-            for rec in records:
-                # field-55 の値を取り出す
-                f55_field = rec.get("field-55", "")
-                f55_val = str(f55_field.get("value", f55_field) if isinstance(f55_field, dict) else f55_field).strip()
-                all_f55_list.append(f55_val)
+            for idx, rec in enumerate(records):
+                row_data = {"レコード番号(index)": idx}
+                is_match = False
                 
-                if target_id in f55_val:
-                    found_rec = rec
-                    break
+                for k, v in rec.items():
+                    # 値の抽出（辞書ならvalueを取り出す）
+                    val = v.get("value", v) if isinstance(v, dict) else v
+                    val_str = str(val)
+                    row_data[k] = val_str
+                    
+                    # 探したい値が含まれているかチェック
+                    if search_val in val_str:
+                        is_match = True
+                
+                all_fields_summary.append(row_data)
+                if is_match:
+                    matched_records.append((idx, rec))
             
-            if found_rec:
+            if matched_records:
                 st.balloons()
-                st.success(f"🎉 該当レコードを発見しました！ (field-55の値: {target_id})")
-                st.json(found_rec)
+                st.success(f"🎉 「{search_val}」が含まれているレコードが {len(matched_records)} 件見つかりました！")
+                for idx, mrec in matched_records:
+                    st.write(f"### 【レコード #{idx} の中身】")
+                    st.json(mrec)
             else:
-                st.error(f"❌ field-55 の中に「{target_id}」に一致するデータが見つかりませんでした。")
-                st.write("### 📋 現在アプリ50に登録されている field-55 の値一覧:")
-                st.write(all_f55_list)
+                st.warning(f"⚠️ どのフィールドにも「{search_val}」という文字は見つかりませんでした。")
+                
+            st.write("### 📋 全レコードのフィールド値一覧:")
+            df_summary = pd.DataFrame(all_fields_summary)
+            st.dataframe(df_summary, use_container_width=True)
+            
         else:
             st.error(f"API接続エラー: Status {response.status_code}")
     except Exception as e:
-        st.error(f"エラー発生: {e}")
+            st.error(f"エラー発生: {e}")
