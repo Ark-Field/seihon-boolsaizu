@@ -228,6 +228,7 @@ def fetch_and_store_pocket_data(order_num):
                                         return val if val is not None else ""
                                     
                                     app29_rows.append({
+                                        "PDF掲載": True,  # デフォルトでチェックON
                                         "種目": str(get_sub29_val("field-31_6")).strip(),
                                         "内容": str(get_sub29_val("field-31_1")).strip()
                                     })
@@ -318,24 +319,21 @@ with col2:
     zenpan_h = st.number_input("材料規格 全判天地 (mm)", min_value=0.0, value=st.session_state.zenpan_h)
     zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=st.session_state.zenpan_w)
 
-# --- ★ 追加：ヘッダー情報の下に配置する【アプリ29 部材一覧表（内容のみ編集可能）】 ---
+# --- アプリ29 部材一覧表（ヘッダー下・チェックボックス付き・内容のみ編集可能） ---
+app29_display_rows = []
 if st.session_state.loaded_data and st.session_state.app29_parts_rows:
     st.markdown("---")
     st.subheader("📋 アプリ29 親データ：部材一覧表（材料部材明細 field-31）")
-    st.caption("💡 項目【内容】のみ画面上で編集可能です（APIへの上書き保存は行いません）。")
+    st.caption("💡 【PDF掲載】のチェックでPDF出力の有無を選択でき、項目【内容】のみ画面上で編集可能です。")
     
     df_app29_input = pd.DataFrame(st.session_state.app29_parts_rows)
-    # 編集用：種目は閲覧用（無効化したい場合はStreamlitの性質上表示のみにするか、列構成を調整）
     edited_app29 = st.data_editor(
         df_app29_input,
         use_container_width=True,
         hide_index=True,
         disabled=["種目"]
     )
-    # 編集された内容を保持
     app29_display_rows = edited_app29.to_dict('records')
-else:
-    app29_display_rows = []
 
 st.markdown("---")
 st.subheader("3. 計算用パーツリスト（アプリ50 独立データ）")
@@ -396,7 +394,7 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             styles = getSampleStyleSheet()
             title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_name, fontSize=22, leading=26, alignment=1, textColor=colors.HexColor('#111'))
             
-            # ★ 受注番号と書名を16ポイント太字にするスタイル
+            # 受注番号と書名を16ポイント太字にするスタイル
             header_bold_style = ParagraphStyle('HeaderBoldStyle', parent=styles['Normal'], fontName=font_name, fontSize=16, leading=20, alignment=1, textColor=colors.HexColor('#111'))
             
             due_style = ParagraphStyle('DueStyle', parent=styles['Normal'], fontName=font_name, fontSize=13, leading=17, alignment=1, textColor=colors.HexColor('#c00'))
@@ -407,7 +405,7 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             story.append(Paragraph("<b>発 注 書</b>", title_style))
             story.append(Spacer(1, 6))
             
-            # ★ 受注番号と書名を16pt太字で表示
+            # 受注番号と書名を16pt太字で表示
             story.append(Paragraph(f"<b>受注番号：{order_id} ｜ 書名：{book_title}</b>", header_bold_style))
             story.append(Spacer(1, 8))
             
@@ -418,27 +416,6 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             story.append(Paragraph(f"<b>納品先:</b> {delivery_to} 様 ｜ <b>必要部数:</b> {quantity}部 ｜ <b>全判規格:</b> {zenpan_w}mm × {zenpan_h}mm ｜ <b>本文サイズ:</b> {hon_w}mm × {hon_h}mm", normal_style))
             story.append(Spacer(1, 10))
             
-            # --- アプリ29の部材一覧表（PDF下部掲載） ---
-            if app29_display_rows:
-                story.append(Paragraph("<b>■ 部材一覧表（アプリ29 材料部材明細）</b>", normal_style))
-                story.append(Spacer(1, 4))
-                app29_table_data = [[Paragraph("<b>種目</b>", table_header_style), Paragraph("<b>内容</b>", table_header_style)]]
-                for ar in app29_display_rows:
-                    app29_table_data.append([
-                        Paragraph(str(ar.get("種目", "")), normal_style),
-                        Paragraph(str(ar.get("内容", "")), normal_style)
-                    ])
-                t_app29 = Table(app29_table_data, colWidths=[200, 340])
-                t_app29.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3d59')),
-                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                    ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
-                    ('PADDING', (0,0), (-1,-1), 4),
-                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ]))
-                story.append(t_app29)
-                story.append(Spacer(1, 10))
-
             # --- 図解セクション ---
             story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 計算仕様情報</b>", normal_style))
             story.append(Spacer(1, 4))
@@ -504,6 +481,28 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
                     
             story.append(d)
             story.append(Spacer(1, 15))
+
+            # --- ★ 追加・移動：アプリ29の部材一覧表（図解の下部・チェックが入っているものだけ掲載） ---
+            checked_app29_rows = [ar for ar in app29_display_rows if ar.get("PDF掲載", False)]
+            if checked_app29_rows:
+                story.append(Paragraph("<b>■ 部材一覧表（アプリ29 材料部材明細）</b>", normal_style))
+                story.append(Spacer(1, 4))
+                app29_table_data = [[Paragraph("<b>種目</b>", table_header_style), Paragraph("<b>内容</b>", table_header_style)]]
+                for ar in checked_app29_rows:
+                    app29_table_data.append([
+                        Paragraph(str(ar.get("種目", "")), normal_style),
+                        Paragraph(str(ar.get("内容", "")), normal_style)
+                    ])
+                t_app29 = Table(app29_table_data, colWidths=[200, 340])
+                t_app29.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3d59')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
+                    ('PADDING', (0,0), (-1,-1), 4),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ]))
+                story.append(t_app29)
+                story.append(Spacer(1, 15))
             
             # --- テーブル構築 ---
             table_data = [[
