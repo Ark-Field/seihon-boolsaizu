@@ -487,11 +487,11 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             if checked_app29_rows:
                 story.append(Paragraph("<b>■ 部材一覧表（材料部材明細）</b>", normal_style))
                 story.append(Spacer(1, 4))
-                app29_table_data = [[Paragraph("<b>種目</b>", table_header_style), Paragraph("<b>内容</b>", table_header_style)]]
+                app29_table_data = [[Paragraph("<b>種目</b>", table_header_style), Paragraph("<b>銘柄</b>", table_header_style)]]
                 for ar in checked_app29_rows:
                     app29_table_data.append([
                         Paragraph(str(ar.get("種目", "")), normal_style),
-                        Paragraph(str(ar.get("銘柄", "")), normal_style)
+                        Paragraph(str(ar.get("内容", "")), normal_style)
                     ])
                 t_app29 = Table(app29_table_data, colWidths=[200, 340])
                 t_app29.setStyle(TableStyle([
