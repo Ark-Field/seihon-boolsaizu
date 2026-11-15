@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50単体）サブテーブル強力解析モード：明細行（field-64）を確実に取得します。")
+st.markdown("💡 @pocket（アプリ50単体）検証モード：明細行（field-64）を確実に取得します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -163,7 +163,7 @@ if search_button or url_order_id:
             except Exception as e:
                 st.sidebar.error(f"API取得時例外エラー: {e}")
 
-# --- アプリ50データのマッピング処理 ＆ 超堅牢サブテーブル解析 ---
+# --- アプリ50データのマッピング処理 ＆ サブテーブル解析 ---
 if api_fetched_data:
     default_order_id = str(get_field_val(api_fetched_data, "field-55", get_field_val(api_fetched_data, "field-23", default_order_id)))
     default_book_title = str(get_field_val(api_fetched_data, "field-24", default_book_title))
@@ -180,27 +180,28 @@ if api_fetched_data:
     default_due_foil = str(get_field_val(api_fetched_data, "field-60", default_due_foil))
     default_ampm_foil = str(get_field_val(api_fetched_data, "field-63", default_ampm_foil))
 
-    # サイドバーでデバッグ表示が有効な場合、field-64の生データを表示
+    # サイドバーでデバッグ表示が有効な場合、安全に表示
     if show_debug:
-        st.sidebar.write("### 🐛 field-64 生データ構造子:")
-        st.sidebar.json(api_fetched_data.get("field-64", "データなし"))
+        st.sidebar.write("### 🐛 field-64 生データ構造:")
+        f64_debug = api_fetched_data.get("field-64", None)
+        if isinstance(f64_debug, (dict, list)):
+            st.sidebar.json(f64_debug)
+        else:
+            st.sidebar.write(str(f64_debug) if f64_debug is not None else "データなし")
 
     # --- 超堅牢なサブテーブル（field-64）解析ロジック ---
     try:
         f64_raw = api_fetched_data.get("field-64", [])
-        # もし辞書型でvalueの中にリストがある場合に対応
         if isinstance(f64_raw, dict):
             f64_raw = f64_raw.get("value", [])
             
         if isinstance(f64_raw, list) and len(f64_raw) > 0:
             extracted_parts = []
             for row in f64_raw:
-                # 行データ自体が辞書で value を持つ場合に対応
                 row_val = row.get("value", row) if isinstance(row, dict) else row
                 if not isinstance(row_val, dict):
                     continue
                 
-                # 各セルの値を取り出すヘルパー関数（入れ子辞書・直値どちらも対応）
                 def get_cell(cell_key):
                     cell = row_val.get(cell_key, "")
                     if isinstance(cell, dict):
