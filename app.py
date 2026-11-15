@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリID: 50）API連携により、発注番号を直接受け取り、明細・柄名を自動紐付けして発注書PDFおよびExcel集計表を生成します。")
+st.markdown("💡 @pocket（アプリID: 50）API連携：発注番号を手入力またはURLから指定してデータを取得し、発注書PDFおよびExcel集計表を生成します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -73,8 +73,17 @@ if os.path.exists(font_filename):
 query_params = st.query_params
 url_order_id = query_params.get("order_id", "")
 
+# --- サイドバー：手動検索機能 ---
+with st.sidebar:
+    st.header("🔍 @pocket レコード検索")
+    search_input = st.text_input("発注番号を入力（例: JS260543）", value=url_order_id)
+    search_button = st.button("APIからデータを取得する")
+
+# 検索対象とする受注番号（手動入力またはURLパラメータ）
+target_order_id = search_input if search_input else url_order_id
+
 # デフォルト値の初期化
-default_order_id = url_order_id if url_order_id else "JS260543"
+default_order_id = target_order_id if target_order_id else "JS260543"
 default_book_title = "詩画集①"
 default_quantity = 1060
 default_supplier_cover = "㈱博勝堂"
@@ -99,37 +108,41 @@ default_parts_data = [
 
 # --- @pocket APIからのデータ自動取得（アプリID: 50） ---
 api_fetched_data = None
-if url_order_id:
-    try:
-        api_key = st.secrets["app50"]["api_key"]
-        api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
-        headers = {
-            "X-At-Pocket-API-Key": api_key,
-            "Content-Type": "application/json"
-        }
-        response = requests.get(api_url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            res_json = response.json()
-            records = res_json.get("records", [])
-            
-            # field-23（受注番号）が一致するレコードを探索
-            for rec in records:
-                f23_val = rec.get("field-23")
-                if isinstance(f23_val, dict):
-                    f23_val = f23_val.get("value", "")
+# ボタンが押された、またはURLパラメータが存在する場合にAPIを叩く
+if search_button or url_order_id:
+    if not target_order_id:
+        st.sidebar.warning("⚠️ 発注番号を入力してください。")
+    else:
+        try:
+            api_key = st.secrets["app50"]["api_key"]
+            api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
+            headers = {
+                "X-At-Pocket-API-Key": api_key,
+                "Content-Type": "application/json"
+            }
+            response = requests.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                res_json = response.json()
+                records = res_json.get("records", [])
                 
-                if str(f23_val).strip() == str(url_order_id).strip():
-                    api_fetched_data = rec
-                    break
+                # field-23（受注番号）が一致するレコードを探索
+                for rec in records:
+                    f23_val = rec.get("field-23")
+                    if isinstance(f23_val, dict):
+                        f23_val = f23_val.get("value", "")
                     
-            if api_fetched_data:
-                st.sidebar.success(f"🔗 @pocketから発注番号 **{url_order_id}** のデータを正常に取得しました！")
+                    if str(f23_val).strip() == str(target_order_id).strip():
+                        api_fetched_data = rec
+                        break
+                        
+                if api_fetched_data:
+                    st.sidebar.success(f"🔗 @pocketから発注番号 **{target_order_id}** のデータを正常に取得しました！")
+                else:
+                    st.sidebar.warning(f"⚠️ @pocket内に発注番号「{target_order_id}」のレコードが見つかりませんでした。")
             else:
-                st.sidebar.warning(f"⚠️ @pocket内に発注番号「{url_order_id}」のレコードが見つかりませんでした。")
-        else:
-            st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
-    except Exception as e:
-        st.sidebar.error(f"API取得時例外エラー: {e}")
+                st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
+        except Exception as e:
+            st.sidebar.error(f"API取得時例外エラー: {e}")
 
 def get_field_val(rec, field_id, default=""):
     if not rec or field_id not in rec:
@@ -156,7 +169,6 @@ if api_fetched_data:
 
     # --- field-31（柄名・種目）と field-64（部材明細）の結合・抽出処理 ---
     try:
-        # 1. field-31 から「種目」(field-31_6) と「内容」(field-31_1) の辞書を作成
         brand_mapping = {}
         f31_data = api_fetched_data.get("field-31", [])
         if isinstance(f31_data, list):
@@ -166,7 +178,6 @@ if api_fetched_data:
                 if kind:
                     brand_mapping[kind] = content
 
-        # 2. field-64（部材明細）を読み込み、部材名(field-64_2)と種目が一致すれば銘柄に反映
         f64_data = api_fetched_data.get("field-64", [])
         if isinstance(f64_data, list) and len(f64_data) > 0:
             extracted_parts = []
@@ -195,6 +206,7 @@ if api_fetched_data:
 
 # サイドバーでの手動CSV補助
 with st.sidebar:
+    st.markdown("---")
     st.header("📂 バックアップ / 手動CSV読込")
     uploaded_file = st.file_uploader("@pocket出力CSVを選択", type=["csv"])
 
