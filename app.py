@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリID: 29）API連携（1000件対策・30秒タイムアウト対応）：受注番号（field-2）でデータを取得し、発注書PDFおよびExcel集計表を生成します。")
+st.markdown("💡 @pocket（アプリ50ヘッダー ＆ アプリ29親データ連携）：2段階API連携により、最新データを自動取得して発注書を生成します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -75,14 +75,14 @@ url_order_id = query_params.get("order_id", "")
 
 # --- サイドバー：手動検索機能 ---
 with st.sidebar:
-    st.header("🔍 @pocket（アプリ29）検索")
-    search_input = st.text_input("受注番号を入力（例: 260543）", value=url_order_id)
+    st.header("🔍 @pocket データ連携検索")
+    search_input = st.text_input("受注番号を入力（例: 260001）", value=url_order_id)
     search_button = st.button("APIからデータを取得する")
 
 target_order_id = search_input if search_input else url_order_id
 
 # デフォルト値の初期化
-default_order_id = target_order_id if target_order_id else "260543"
+default_order_id = target_order_id if target_order_id else "260001"
 default_book_title = "詩画集①"
 default_quantity = 1060
 default_supplier_cover = "㈱博勝堂"
@@ -105,7 +105,8 @@ default_parts_data = [
     {"部材名": "芯ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 3},
 ]
 
-api_fetched_data = None
+app50_data = None
+app29_data = None
 
 def get_field_val(rec, field_id, default=""):
     if not rec or field_id not in rec:
@@ -115,103 +116,109 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- @pocket APIからのデータ自動取得（アプリID: 29 / タイムアウト30秒） ---
+# --- 2段階API連携の実行 ---
 if search_button or url_order_id:
     if not target_order_id:
         st.sidebar.warning("⚠️ 受注番号を入力してください。")
     else:
-        with st.spinner("⏳ @pocketからデータを取得中..."):
+        with st.spinner("⏳ @pocket（アプリ50 ＆ アプリ29）からデータを取得中..."):
             try:
-                api_key = st.secrets["app29"]["api_key"]
-                api_url = "https://app050.at-pocket.com/seihon02_bb/api/apps/29/records"
-                headers = {
-                    "X-At-Pocket-API-Key": api_key,
-                    "Content-Type": "application/json"
-                }
-                # タイムアウトを30秒に設定
-                response = requests.get(api_url, headers=headers, timeout=30)
-                if response.status_code == 200:
-                    res_json = response.json()
-                    records = res_json.get("records", [])
-                    
+                # 1. まず【アプリ50】から該当レコードを検索
+                api_key_50 = st.secrets["app50"]["api_key"]
+                url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
+                headers_50 = {"X-At-Pocket-API-Key": api_key_50, "Content-Type": "application/json"}
+                
+                res_50 = requests.get(url_50, headers=headers_50, timeout=30)
+                if res_50.status_code == 200:
+                    records_50 = res_50.json().get("records", [])
                     clean_target = str(target_order_id).replace("JS", "").strip()
                     
-                    # field-2（受注番号）が一致するレコードを探索
-                    for rec in records:
-                        f2_val = str(get_field_val(rec, "field-2")).strip()
-                        clean_f2 = f2_val.replace("JS", "").strip()
-                        
-                        if clean_target in [clean_f2, f2_val]:
-                            api_fetched_data = rec
+                    for rec in records_50:
+                        f55 = str(get_field_val(rec, "field-55")).strip()
+                        f23 = str(get_field_val(rec, "field-23")).strip()
+                        if clean_target in [f55, f23, f55.replace("JS", ""), f23.replace("JS", "")]:
+                            app50_data = rec
                             break
                     
-                    # 万が一見つからない場合は総当たりフォールバック
-                    if not api_fetched_data:
-                        for rec in records:
-                            found = False
-                            for k, v in rec.items():
-                                v_str = str(v.get("value", v) if isinstance(v, dict) else v)
-                                clean_v = v_str.replace("JS", "").strip()
-                                if clean_target and clean_target in clean_v:
-                                    found = True
-                                    break
-                            if found:
-                                api_fetched_data = rec
-                                break
+                    if app50_data:
+                        st.sidebar.success(f"🔗 アプリ50（受注番号: {target_order_id}）を発見！")
+                        
+                        # アプリ50から親の受注番号（field-23）を取得
+                        parent_order_id = str(get_field_val(app50_data, "field-23", "")).strip()
+                        
+                        if parent_order_id:
+                            # 2. 次に【アプリ29（親データ）】を検索
+                            api_key_29 = st.secrets["app29"]["api_key"]
+                            url_29 = "https://app050.at-pocket.com/seihon02_bb/api/apps/29/records"
+                            headers_29 = {"X-At-Pocket-API-Key": api_key_29, "Content-Type": "application/json"}
                             
-                    if api_fetched_data:
-                        st.sidebar.success(f"🔗 アプリ29から受注番号 **{target_order_id}** のデータを取得しました！")
+                            res_29 = requests.get(url_29, headers=headers_29, timeout=30)
+                            if res_29.status_code == 200:
+                                records_29 = res_29.json().get("records", [])
+                                clean_parent = parent_order_id.replace("JS", "").strip()
+                                
+                                for prec in records_29:
+                                    f2 = str(get_field_val(prec, "field-2")).strip()
+                                    if clean_parent in [f2, f2.replace("JS", "")]:
+                                        app29_data = prec
+                                        break
+                                        
+                                if app29_data:
+                                    st.sidebar.success(f"🔗 親データ（アプリ29 / 受注番号: {parent_order_id}）の紐付け成功！")
+                                else:
+                                    st.sidebar.warning(f"⚠️ アプリ29内に親受注番号「{parent_order_id}」が見つかりませんでした。")
+                            else:
+                                st.sidebar.error(f"アプリ29 API接続エラー (Status: {res_29.status_code})")
+                        else:
+                            st.sidebar.warning("⚠️ アプリ50のレコードに親受注番号（field-23）が空です。")
                     else:
-                        st.sidebar.warning(f"⚠️ アプリ29内に「{target_order_id}」のレコードが見つかりませんでした。")
+                        st.sidebar.warning(f"⚠️ アプリ50内に「{target_order_id}」が見つかりませんでした。")
                 else:
-                    st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
+                    st.sidebar.error(f"アプリ50 API接続エラー (Status: {res_50.status_code})")
             except Exception as e:
-                st.sidebar.error(f"API取得時例外エラー: {e}")
+                st.sidebar.error(f"API連携時例外エラー: {e}")
 
-# APIデータが取得できた場合のマッピング処理（アプリ29のフィールド定義に準拠）
-if api_fetched_data:
-    default_order_id = str(get_field_val(api_fetched_data, "field-2", default_order_id))
-    default_book_title = str(get_field_val(api_fetched_data, "field-9", default_book_title))
-    default_quantity = safe_int(get_field_val(api_fetched_data, "field-15", default_quantity), default_quantity)
-    default_hon_h = safe_float(get_field_val(api_fetched_data, "field-56", default_hon_h), default_hon_h)
-    default_hon_w = safe_float(get_field_val(api_fetched_data, "field-57", default_hon_w), default_hon_w)
-    default_supplier_cover = str(get_field_val(api_fetched_data, "field-49", default_supplier_cover))
-    default_supplier_foil = str(get_field_val(api_fetched_data, "field-51", default_supplier_foil))
+# --- 取得データのマッピング処理 ---
+if app50_data:
+    # アプリ50のヘッダー項目をマッピング
+    default_order_id = str(get_field_val(app50_data, "field-55", default_order_id))
+    default_book_title = str(get_field_val(app50_data, "field-24", default_book_title))
+    default_quantity = safe_int(get_field_val(app50_data, "field-25", default_quantity), default_quantity)
+    default_hon_h = safe_float(get_field_val(app50_data, "field-27", default_hon_h), default_hon_h)
+    default_hon_w = safe_float(get_field_val(app50_data, "field-28", default_hon_w), default_hon_w)
+    default_delivery_to = str(get_field_val(app50_data, "field-69", default_delivery_to))
+    
+    default_supplier_cover = str(get_field_val(app50_data, "field-57", default_supplier_cover))
+    default_due_cover = str(get_field_val(app50_data, "field-61", default_due_cover))
+    default_ampm_cover = str(get_field_val(app50_data, "field-62", default_ampm_cover))
+    
+    default_supplier_foil = str(get_field_val(app50_data, "field-59", default_supplier_foil))
+    default_due_foil = str(get_field_val(app50_data, "field-60", default_due_foil))
+    default_ampm_foil = str(get_field_val(app50_data, "field-63", default_ampm_foil))
 
-    # --- field-31（柄名・種目）と材料部材明細の結合処理 ---
+# アプリ29（親データ）から柄名（field-31）を抽出して部材銘柄に反映
+if app29_data:
     try:
         brand_mapping = {}
-        f31_data = api_fetched_data.get("field-31", [])
+        f31_data = app29_data.get("field-31", [])
         if isinstance(f31_data, list):
             for row in f31_data:
-                kind = str(get_field_val(row, "field-31_6", "")).strip()
-                content = str(get_field_val(row, "field-31_1", "")).strip()
+                kind = str(get_field_val(row, "field-31_6", "")).strip() # 種目 (芯ボール、背ボール、表紙など)
+                content = str(get_field_val(row, "field-31_1", "")).strip() # 内容 (銘柄・柄名)
                 if kind:
                     brand_mapping[kind] = content
-
-        if isinstance(f31_data, list) and len(f31_data) > 0:
-            extracted_parts = []
-            for row in f31_data:
-                b_name = str(get_field_val(row, "field-31_6", "")).strip()
-                if not b_name or b_name not in ["芯ボール", "背ボール", "溝あき"]:
-                    continue
-                is_groove = "溝あき" in b_name
-                matched_brand = str(get_field_val(row, "field-31_1", "")).strip()
-                
-                extracted_parts.append({
-                    "部材名": b_name,
-                    "銘柄": matched_brand,
-                    "備考": "",
-                    "１冊面数": 0 if is_groove else 1,
-                    "天地サイズ+-": 6.0 if "芯ボール" in b_name or "背ボール" in b_name else 0.0,
-                    "左右サイズ+-": -3.5 if "芯ボール" in b_name else (0.0 if "溝あき" in b_name else 0.0),
-                    "固定幅【背】": 12.0 if "背ボール" in b_name else 0.0,
-                    "レコードID": 1
-                })
-            if extracted_parts:
-                default_parts_data = extracted_parts
-    except Exception as parse_err:
-        print(f"明細パースエラー: {parse_err}")
+        
+        # 既存のデフォルト部材に対して、アプリ29の柄名を自動流し込み
+        updated_parts = []
+        for part in default_parts_data:
+            p_name = part["部材名"]
+            # 種目が一致すればアプリ29の内容で銘柄を上書き
+            if p_name in brand_mapping:
+                part["銘柄"] = brand_mapping[p_name]
+            updated_parts.append(part)
+        default_parts_data = updated_parts
+    except Exception as e:
+        print(f"アプリ29 柄名パースエラー: {e}")
 
 # サイドバーでの手動CSV補助
 with st.sidebar:
@@ -356,18 +363,19 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
                     d.add(String(start_x + 4, y_offset + 130, f"仕上寸法:", fontName=font_name, fontSize=5.5, fillColor=colors.HexColor('#666')))
                     d.add(String(start_x + 4, y_offset + 116, f"{p['サイズ_W']}×{p['サイズ_H']}", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#222')))
                     d.add(Line(start_x + 4, y_offset + 106, start_x + box_w - 4, y_offset + 106, strokeColor=colors.HexColor('#f0d0a0'), strokeWidth=0.5))
-                    d.add(String(start_x + 4, y_offset + 88, "※数値表示", fontName=font_name, fontSize=5.5, fillColor=colors.HexColor('#888')))
+                    d.add(String(start_x + 4, y_offset + 88, f"銘柄:{p['銘柄']}", fontName=font_name, fontSize=5.5, fillColor=colors.HexColor('#444')))
                     d.add(String(start_x + 4, y_offset + 66, f"仕上:{p['仕上枚数']}枚", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#004')))
                     d.add(String(start_x + 4, y_offset + 44, f"全判:{p['全判枚数']}枚", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#006')))
                 else:
                     d.add(Rect(start_x, y_offset, box_w, 170, fillColor=colors.HexColor('#fafafa'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
                     d.add(String(start_x + 6, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#000')))
                     d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#444')))
+                    d.add(String(start_x + 6, y_offset + 116, f"銘柄:{p['銘柄']}", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#222')))
                     mini_x = start_x + (box_w - 42) / 2
-                    d.add(Rect(mini_x, y_offset + 82, 42, 35, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
-                    d.add(String(mini_x + 4, y_offset + 95, f"{p['面取り数']}面取", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#c00')))
-                    d.add(String(start_x + 6, y_offset + 64, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
-                    d.add(String(start_x + 6, y_offset + 44, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
+                    d.add(Rect(mini_x, y_offset + 72, 42, 32, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
+                    d.add(String(mini_x + 4, y_offset + 82, f"{p['面取り数']}面取", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#c00')))
+                    d.add(String(start_x + 6, y_offset + 54, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
+                    d.add(String(start_x + 6, y_offset + 36, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
                 start_x += box_w + 10
                 
         story.append(d)
@@ -452,7 +460,7 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
         wb.save(excel_buffer)
         excel_bytes = excel_buffer.getvalue()
         
-        st.success("✨ アプリ29データ連動に基づく発注書PDF および Excelの生成が完了しました！")
+        st.success("✨ アプリ50ヘッダー ＆ アプリ29親データ連携に基づく発注書PDF および Excelの生成が完了しました！")
         
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
