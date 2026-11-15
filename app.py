@@ -1,60 +1,468 @@
 import streamlit as st
 import pandas as pd
 import requests
+import io
+import os
+import math
+import urllib.request
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.graphics.shapes import Drawing, Rect, String, Line
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import openpyxl
 
-st.title("🔍 アプリ50 全フィールド値の総当たり調査ツール")
+# ページ基本設定
+st.set_page_config(page_title="芯ボール・背ボール・溝あき対応 発注書・図面自動作成システム", layout="wide")
 
-with st.sidebar:
-    st.header("検索設定")
-    search_val = st.text_input("探したい番号（例: 260001）", value="260001")
-    run_diag = st.button("全フィールドから探す")
+# カスタムスタイル（ダークネイビー調）
+st.markdown("""
+<style>
+    .stButton>button {
+        background-color: #1e3d59;
+        color: white;
+        border-radius: 4px;
+    }
+    .stButton>button:hover {
+        background-color: #172b3a;
+        color: white;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-if run_diag:
+st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
+st.markdown("💡 @pocket（アプリ50連携）：サイドバーから受注番号を指定してデータを取得してください。")
+
+def safe_int(val, default=0):
+    if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
+        return default
     try:
-        api_key_50 = st.secrets["app50"]["api_key"]
-        url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
-        headers_50 = {"X-At-Pocket-API-Key": api_key_50, "Content-Type": "application/json"}
-        
-        response = requests.get(url_50, headers=headers_50, timeout=30)
-        if response.status_code == 200:
-            records = response.json().get("records", [])
-            st.success(f"アプリ50から {len(records)} 件のレコードを取得しました。")
-            
-            matched_records = []
-            all_fields_summary = []
-            
-            for idx, rec in enumerate(records):
-                row_data = {"レコード番号(index)": idx}
-                is_match = False
-                
-                for k, v in rec.items():
-                    # 値の抽出（辞書ならvalueを取り出す）
-                    val = v.get("value", v) if isinstance(v, dict) else v
-                    val_str = str(val)
-                    row_data[k] = val_str
-                    
-                    # 探したい値が含まれているかチェック
-                    if search_val in val_str:
-                        is_match = True
-                
-                all_fields_summary.append(row_data)
-                if is_match:
-                    matched_records.append((idx, rec))
-            
-            if matched_records:
-                st.balloons()
-                st.success(f"🎉 「{search_val}」が含まれているレコードが {len(matched_records)} 件見つかりました！")
-                for idx, mrec in matched_records:
-                    st.write(f"### 【レコード #{idx} の中身】")
-                    st.json(mrec)
-            else:
-                st.warning(f"⚠️ どのフィールドにも「{search_val}」という文字は見つかりませんでした。")
-                
-            st.write("### 📋 全レコードのフィールド値一覧:")
-            df_summary = pd.DataFrame(all_fields_summary)
-            st.dataframe(df_summary, use_container_width=True)
-            
-        else:
-            st.error(f"API接続エラー: Status {response.status_code}")
+        return int(float(str(val)))
+    except (ValueError, TypeError):
+        return default
+
+def safe_float(val, default=0.0):
+    if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
+        return default
+    try:
+        return float(str(val))
+    except (ValueError, TypeError):
+        return default
+
+# フォント設定
+font_name = 'Helvetica'
+font_filename = "NotoSansJP-Regular.ttf"
+
+if not os.path.exists(font_filename):
+    try:
+        font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
+        urllib.request.urlretrieve(font_url, font_filename)
     except Exception as e:
-            st.error(f"エラー発生: {e}")
+        print(f"Font download error: {e}")
+
+if os.path.exists(font_filename):
+    try:
+        pdfmetrics.registerFont(TTFont('JapFont', font_filename))
+        font_name = 'JapFont'
+    except Exception as e:
+        print(f"Font registration error: {e}")
+
+# --- URLパラメータの取得 ---
+query_params = st.query_params
+url_order_id = query_params.get("order_id", "")
+
+# --- サイドバー：手動検索機能 ---
+with st.sidebar:
+    st.header("🔍 @pocket（アプリ50）検索")
+    search_input = st.text_input("受注番号を入力（例: 260001）", value=url_order_id)
+    search_button = st.button("APIからデータを取得する")
+
+target_order_id = search_input if search_input else url_order_id
+
+api_fetched_data = None
+
+def get_field_val(rec, field_id, default=""):
+    if not rec or field_id not in rec:
+        return default
+    val = rec[field_id]
+    if isinstance(val, dict):
+        return val.get("value", default)
+    return val if val is not None else default
+
+# --- アプリ50 APIからのデータ取得 ---
+if search_button or url_order_id:
+    if not target_order_id:
+        st.sidebar.warning("⚠️ 受注番号を入力してください。")
+    else:
+        with st.spinner("⏳ @pocket（アプリ50）からデータを取得中..."):
+            try:
+                api_key_50 = st.secrets["app50"]["api_key"]
+                url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
+                headers_50 = {"X-At-Pocket-API-Key": api_key_50, "Content-Type": "application/json"}
+                
+                response = requests.get(url_50, headers=headers_50, timeout=30)
+                if response.status_code == 200:
+                    records = response.json().get("records", [])
+                    clean_target = str(target_order_id).replace("JS", "").strip()
+                    
+                    for rec in records:
+                        inner_rec = rec.get("record", rec)
+                        f55 = str(get_field_val(inner_rec, "field-55")).strip()
+                        if clean_target in [f55, f55.replace("JS", "")]:
+                            api_fetched_data = rec
+                            break
+                    
+                    if not api_fetched_data:
+                        for rec in records:
+                            inner_rec = rec.get("record", rec)
+                            found = False
+                            for k, v in inner_rec.items():
+                                v_str = str(v.get("value", v) if isinstance(v, dict) else v)
+                                if clean_target and clean_target in v_str.replace("JS", "").strip():
+                                    found = True
+                                    break
+                            if found:
+                                api_fetched_data = rec
+                                break
+                    
+                    if api_fetched_data:
+                        st.sidebar.success(f"🔗 アプリ50（受注番号: {target_order_id}）を発見しました！")
+                    else:
+                        st.sidebar.warning(f"⚠️ アプリ50内に「{target_order_id}」のレコードが見つかりませんでした。")
+                else:
+                    st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
+            except Exception as e:
+                st.sidebar.error(f"API取得時例外エラー: {e}")
+
+# --- 変数の初期化（データ未取得時は空にする） ---
+v_order_id = target_order_id
+v_book_title = ""
+v_quantity = 0
+v_supplier_cover = ""
+v_due_cover = ""
+v_ampm_cover = ""
+v_supplier_foil = ""
+v_due_foil = ""
+v_ampm_foil = ""
+v_delivery_to = ""
+v_hon_h = 0.0
+v_hon_w = 0.0
+v_zenpan_h = 1100.0
+v_zenpan_w = 800.0
+parts_rows = []
+
+# --- データが取得できている場合のみ値をセット ---
+if api_fetched_data:
+    r = api_fetched_data.get("record", api_fetched_data)
+    
+    v_order_id = str(get_field_val(r, "field-55", target_order_id))
+    v_book_title = str(get_field_val(r, "field-24", ""))
+    v_quantity = safe_int(get_field_val(r, "field-70", get_field_val(r, "field-25", 0)), 0)
+    
+    v_hon_h = safe_float(get_field_val(r, "field-27", 0.0), 0.0)
+    v_hon_w = safe_float(get_field_val(r, "field-28", 0.0), 0.0)
+    
+    v_zenpan_h = safe_float(get_field_val(r, "field-67", 1100.0), 1100.0)
+    v_zenpan_w = safe_float(get_field_val(r, "field-68", 800.0), 800.0)
+    
+    v_delivery_to = str(get_field_val(r, "field-69", ""))
+    
+    v_supplier_cover = str(get_field_val(r, "field-57", ""))
+    v_due_cover = str(get_field_val(r, "field-61", ""))
+    v_ampm_cover = str(get_field_val(r, "field-62", ""))
+    
+    v_supplier_foil = str(get_field_val(r, "field-59", ""))
+    v_due_foil = str(get_field_val(r, "field-60", ""))
+    v_ampm_foil = str(get_field_val(r, "field-63", ""))
+
+    # サブテーブル解析
+    try:
+        f64_raw = r.get("field-64", [])
+        if isinstance(f64_raw, dict):
+            f64_raw = f64_raw.get("value", [])
+            
+        if isinstance(f64_raw, list) and len(f64_raw) > 0:
+            for sub_row in f64_raw:
+                sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
+                if not isinstance(sub_rec, dict):
+                    continue
+                
+                def get_sub_val(key):
+                    val = sub_rec.get(key, "")
+                    if isinstance(val, dict):
+                        return val.get("value", "")
+                    return val if val is not None else ""
+
+                b_name = str(get_sub_val("field-64_2")).strip()
+                if not b_name:
+                    continue
+                
+                is_groove = "溝あき" in b_name
+                
+                parts_rows.append({
+                    "部材名": b_name,
+                    "銘柄": str(get_sub_val("field-64_1")).strip(),
+                    "備考": "",
+                    "１冊面数": 0 if is_groove else safe_int(get_sub_val("field-64_4"), 1),
+                    "天地サイズ+-": safe_float(get_sub_val("field-64_5"), 0.0),
+                    "左右サイズ+-": safe_float(get_sub_val("field-64_6"), 0.0),
+                    "固定幅【背】": safe_float(get_sub_val("field-64_7"), 0.0),
+                    "レコードID": safe_int(sub_row.get("recordSubId", 1), 1)
+                })
+    except Exception as e:
+        st.sidebar.error(f"サブテーブル解析エラー: {e}")
+
+# --- 画面レイアウト ---
+if not api_fetched_data:
+    st.info("ℹ️ 【データ未取得】サイドバーから受注番号（例: 260001）を入力し、**[APIからデータを取得する]** ボタンを押してください。")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("1. 受注・発注基本情報")
+    order_id = st.text_input("受注番号", value=v_order_id)
+    book_title = st.text_input("書名（製品名）", value=v_book_title)
+    quantity = st.number_input("必要数量（受注部数）", min_value=0, value=v_quantity)
+    supplier_cover = st.text_input("表紙貼外注先", value=v_supplier_cover)
+    due_cover = st.text_input("納期（表紙）", value=v_due_cover)
+    ampm_cover = st.text_input("AMPM（表紙）", value=v_ampm_cover)
+    supplier_foil = st.text_input("表紙箔押外注先", value=v_supplier_foil)
+    due_foil = st.text_input("納期（箔押）", value=v_due_foil)
+    ampm_foil = st.text_input("AMPM（箔押）", value=v_ampm_foil)
+    delivery_to = st.text_input("納品先", value=v_delivery_to)
+
+with col2:
+    st.subheader("2. 本文仕様 ＆ 全判材料サイズ設定")
+    hon_h = st.number_input("本文 天地サイズ (mm)", min_value=0.0, value=v_hon_h)
+    hon_w = st.number_input("本文 左右サイズ (mm)", min_value=0.0, value=v_hon_w)
+    zenpan_h = st.number_input("材料規格 全判天地 (mm)", min_value=0.0, value=v_zenpan_h)
+    zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=v_zenpan_w)
+
+st.markdown("---")
+st.subheader("3. 読込済み部材明細（パーツリスト確認・編集）")
+
+df_parts_input = pd.DataFrame(parts_rows) if parts_rows else pd.DataFrame(columns=["部材名", "銘柄", "備考", "１冊面数", "天地サイズ+-", "左右サイズ+-", "固定幅【背】", "レコードID"])
+edited_parts = st.data_editor(df_parts_input, num_rows="dynamic", use_container_width=True)
+
+if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="primary"):
+    if not api_fetched_data and not parts_rows:
+        st.warning("⚠️ データが取得されていません。先に受注番号を検索してデータを読み込んでください。")
+    else:
+        try:
+            calculated_rows = []
+            total_sheets_sum = 0
+            total_pieces_sum = 0
+            
+            for _, row in edited_parts.iterrows():
+                p_name = str(row.get("部材名", ""))
+                if not p_name:
+                    continue
+                p_brand = str(row.get("銘柄", "")) if pd.notna(row.get("銘柄", "")) else ""
+                p_remark = str(row.get("備考", "")) if pd.notna(row.get("備考", "")) else ""
+                is_groove = "溝あき" in p_name
+                p_count = 0 if is_groove else safe_int(row.get("１冊面数", 1), 1)
+                t_plus = safe_float(row.get("天地サイズ+-", 0.0), 0.0)
+                s_plus = safe_float(row.get("左右サイズ+-", 0.0), 0.0)
+                fixed_w = safe_float(row.get("固定幅【背】", 0.0), 0.0)
+                rec_id = safe_int(row.get("レコードID", 0), 0)
+                
+                w = fixed_w if fixed_w > 0 else (hon_w + s_plus)
+                h = hon_h + t_plus
+                
+                mentori1 = int(zenpan_w // w) * int(zenpan_h // h) if (w > 0 and h > 0) else 0
+                mentori2 = int(zenpan_w // h) * int(zenpan_h // w) if (w > 0 and h > 0) else 0
+                max_mentori = max(mentori1, mentori2)
+                
+                pieces_needed = quantity if is_groove else (quantity * p_count)
+                sheets_needed = math.ceil(pieces_needed / max_mentori) if max_mentori > 0 else 0
+                
+                total_sheets_sum += sheets_needed
+                total_pieces_sum += pieces_needed
+                
+                calculated_rows.append({
+                    "部材名": p_name, "銘柄": p_brand, "備考": p_remark,
+                    "面数": "-" if is_groove else f"{p_count}面",
+                    "サイズ_W": w, "サイズ_H": h, "面取り数": max_mentori,
+                    "仕上枚数": pieces_needed, "全判枚数": sheets_needed,
+                    "レコードID": rec_id, "is_groove": is_groove
+                })
+
+            # --- PDF生成 ---
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25)
+            story = []
+            
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_name, fontSize=22, leading=26, alignment=1, textColor=colors.HexColor('#111'))
+            due_style = ParagraphStyle('DueStyle', parent=styles['Normal'], fontName=font_name, fontSize=13, leading=17, alignment=1, textColor=colors.HexColor('#c00'))
+            normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13)
+            center_style = ParagraphStyle('CenterStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13, alignment=1)
+            table_header_style = ParagraphStyle('TableHeaderStyle', parent=styles['Normal'], fontName=font_name, fontSize=9.5, leading=13, alignment=1, textColor=colors.HexColor('#ffffff'))
+            
+            story.append(Paragraph("<b>発 注 書</b>", title_style))
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(f"<b>【 表紙貼外注先 】</b> {supplier_cover} 様 ｜ <font color='#c00'><b>納期： {due_cover} ({ampm_cover})</b></font>", due_style))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>【 表紙箔押外注先 】</b> {supplier_foil} 様 ｜ <font color='#c00'><b>納期： {due_foil} ({ampm_foil})</b></font>", due_style))
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(f"<b>納品先:</b> {delivery_to} 様 ｜ <b>受注番号:</b> {order_id} ｜ <b>書名:</b> {book_title}", normal_style))
+            story.append(Paragraph(f"<b>必要部数:</b> {quantity}部 ｜ <b>全判規格:</b> {zenpan_w}mm × {zenpan_h}mm ｜ <b>本文サイズ:</b> {hon_w}mm × {hon_h}mm", normal_style))
+            story.append(Spacer(1, 10))
+            
+            # --- 図解セクション ---
+            story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 仕様情報</b>", normal_style))
+            story.append(Spacer(1, 4))
+            
+            card_metrics = []
+            for p in calculated_rows:
+                p_lower = p["部材名"]
+                if p["is_groove"]:
+                    card_metrics.append({"w": int(85 * 0.7), "h": 170, "type": "groove", "p": p})
+                elif "背ボール" in p_lower:
+                    card_metrics.append({"w": int(125 * 0.7), "h": 170, "type": "back", "p": p})
+                elif "芯ボール" in p_lower:
+                    card_metrics.append({"w": int(125 * 0.8), "h": 170, "type": "core", "p": p})
+                else:
+                    card_metrics.append({"w": 125, "h": 170, "type": "normal", "p": p})
+            
+            max_row_w = 530
+            rows_layout = []
+            current_row = []
+            current_w = 0
+            for item in card_metrics:
+                spacing = 10 if current_row else 0
+                if current_w + item["w"] + spacing > max_row_w and current_row:
+                    rows_layout.append(current_row)
+                    current_row = [item]
+                    current_w = item["w"]
+                else:
+                    current_row.append(item)
+                    current_w += item["w"] + spacing
+            if current_row:
+                rows_layout.append(current_row)
+                
+            drawing_height = max(190, len(rows_layout) * 185 + 15)
+            d = Drawing(540, drawing_height)
+            
+            for r_idx, row_items in enumerate(rows_layout):
+                y_offset = drawing_height - (r_idx + 1) * 185 - 10
+                start_x = 15
+                for item in row_items:
+                    p = item["p"]
+                    box_w = item["w"]
+                    p_lower = p["部材名"]
+                    if item["type"] == "groove":
+                        d.add(Rect(start_x, y_offset, box_w, 170, fillColor=colors.HexColor('#fff8ee'), strokeColor=colors.HexColor('#d9822b'), strokeWidth=1, strokeDashArray=[2,2]))
+                        d.add(String(start_x + 4, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#b75800')))
+                        d.add(String(start_x + 4, y_offset + 130, f"仕上寸法:", fontName=font_name, fontSize=5.5, fillColor=colors.HexColor('#666')))
+                        d.add(String(start_x + 4, y_offset + 116, f"{p['サイズ_W']}×{p['サイズ_H']}", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#222')))
+                        d.add(Line(start_x + 4, y_offset + 106, start_x + box_w - 4, y_offset + 106, strokeColor=colors.HexColor('#f0d0a0'), strokeWidth=0.5))
+                        d.add(String(start_x + 4, y_offset + 88, f"銘柄:{p['銘柄']}", fontName=font_name, fontSize=5.5, fillColor=colors.HexColor('#444')))
+                        d.add(String(start_x + 4, y_offset + 66, f"仕上:{p['仕上枚数']}枚", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#004')))
+                        d.add(String(start_x + 4, y_offset + 44, f"全判:{p['全判枚数']}枚", fontName=font_name, fontSize=6.5, fillColor=colors.HexColor('#006')))
+                    else:
+                        d.add(Rect(start_x, y_offset, box_w, 170, fillColor=colors.HexColor('#fafafa'), strokeColor=colors.HexColor('#333'), strokeWidth=1.2))
+                        d.add(String(start_x + 6, y_offset + 148, f"【{p_lower}】", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#000')))
+                        d.add(String(start_x + 6, y_offset + 130, f"寸法:{p['サイズ_W']}×{p['サイズ_H']}mm", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#444')))
+                        d.add(String(start_x + 6, y_offset + 116, f"銘柄:{p['銘柄']}", fontName=font_name, fontSize=6, fillColor=colors.HexColor('#222')))
+                        mini_x = start_x + (box_w - 42) / 2
+                        d.add(Rect(mini_x, y_offset + 72, 42, 32, fillColor=colors.HexColor('#ffffff'), strokeColor=colors.HexColor('#004080'), strokeWidth=1))
+                        d.add(String(mini_x + 4, y_offset + 82, f"{p['面取り数']}面取", fontName=font_name, fontSize=7, fillColor=colors.HexColor('#c00')))
+                        d.add(String(start_x + 6, y_offset + 54, f"仕上: {p['仕上枚数']}枚", fontName=font_name, fontSize=7.5, fillColor=colors.HexColor('#004')))
+                        d.add(String(start_x + 6, y_offset + 36, f"全判: {p['全判枚数']}枚", fontName=font_name, fontSize=8, fillColor=colors.HexColor('#006')))
+                    start_x += box_w + 10
+                    
+            story.append(d)
+            story.append(Spacer(1, 15))
+            
+            # --- テーブル構築 ---
+            table_data = [[
+                Paragraph("<b>部材名</b>", table_header_style), Paragraph("<b>銘柄(表紙クロス)</b>", table_header_style), 
+                Paragraph("<b>備考</b>", table_header_style), Paragraph("<b>1冊面数</b>", table_header_style), 
+                Paragraph("<b>計算サイズ (W×H)</b>", table_header_style), Paragraph("<b>全判サイズ</b>", table_header_style), 
+                Paragraph("<b>面取り数</b>", table_header_style), Paragraph("<b>仕上枚数</b>", table_header_style), 
+                Paragraph("<b>全判枚数</b>", table_header_style)
+            ]]
+            for p in calculated_rows:
+                table_data.append([
+                    Paragraph(p["部材名"], normal_style), Paragraph(p["銘柄"], normal_style), Paragraph(p["備考"], normal_style),
+                    Paragraph(str(p["面数"]), center_style), Paragraph(f"{p['サイズ_W']}mm × {p['サイズ_H']}mm", normal_style),
+                    Paragraph(f"{zenpan_w}mm × {zenpan_h}mm", normal_style), Paragraph("-" if p["is_groove"] else f"{p['面取り数']}面/枚", center_style),
+                    Paragraph(f"{p['仕上枚数']}枚", center_style), Paragraph(f"<b>{p['全判枚数']}枚</b>", center_style),
+                ])
+            table_data.append([
+                Paragraph("<b>合計</b>", center_style), Paragraph("", normal_style), Paragraph("", normal_style),
+                Paragraph("", center_style), Paragraph("", normal_style), Paragraph("", center_style),
+                Paragraph("", center_style), Paragraph(f"<b>{total_pieces_sum}枚</b>", center_style), Paragraph(f"<b>{total_sheets_sum}枚</b>", center_style),
+            ])
+                
+            t = Table(table_data, colWidths=[70, 75, 55, 45, 85, 65, 50, 47, 48])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3d59')),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#f0f0f0')),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
+                ('PADDING', (0,0), (-1,-1), 4),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ]))
+            story.append(t)
+            
+            # --- 社判・担当者サイン欄の追加 ---
+            story.append(Spacer(1, 15))
+            sign_header_style = ParagraphStyle('SignHeader', parent=styles['Normal'], fontName=font_name, fontSize=8, alignment=1)
+            sign_cell_style = ParagraphStyle('SignCell', parent=styles['Normal'], fontName=font_name, fontSize=8, alignment=1)
+            
+            sign_data = [
+                [
+                    Paragraph("<b>発注元</b>", sign_header_style),
+                    Paragraph("<b>承認者</b>", sign_header_style),
+                    Paragraph("<b>担当者</b>", sign_header_style),
+                    Paragraph("<b>受注確認（外注先様）</b>", sign_header_style)
+                ],
+                [
+                    Paragraph("<br/><br/>（社判）<br/><br/>", sign_cell_style),
+                    Paragraph("<br/><br/><br/>", sign_cell_style),
+                    Paragraph("<br/><br/><br/>", sign_cell_style),
+                    Paragraph("<br/><br/><br/>", sign_cell_style)
+                ]
+            ]
+            sign_table = Table(sign_data, colWidths=[100, 80, 80, 280])
+            sign_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f0f0f0')),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ]))
+            story.append(sign_table)
+            
+            doc.build(story)
+            pdf_bytes = buffer.getvalue()
+            
+            # --- Excel 生成 ---
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "発注計算集計表"
+            ws.append(["受注番号", order_id, "書名", book_title])
+            ws.append(["必要部数", quantity, "全判サイズ", f"{zenpan_w} × {zenpan_h} mm"])
+            ws.append([])
+            ws.append(["部材名", "銘柄", "備考", "面数", "サイズW", "サイズH", "面取り数", "仕上枚数", "全判枚数"])
+            for p in calculated_rows:
+                ws.append([p["部材名"], p["銘柄"], p["備考"], p["面数"], p["サイズ_W"], p["サイズ_H"], p["面取り数"], p["仕上枚数"], p["全判枚数"]])
+            ws.append(["合計", "", "", "", "", "", "", total_pieces_sum, total_sheets_sum])
+            
+            excel_buffer = io.BytesIO()
+            wb.save(excel_buffer)
+            excel_bytes = excel_buffer.getvalue()
+            
+            st.success("✨ 発注書PDF および Excelの生成が完了しました！")
+            
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                st.download_button("📥 発注書PDFをダウンロード", data=pdf_bytes, file_name=f"order_sheet_{order_id}.pdf", mime="application/pdf")
+            with col_dl2:
+                st.download_button("📊 集計Excelをダウンロード", data=excel_bytes, file_name=f"order_calc_{order_id}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            
+        except Exception as err:
+            st.error(f"ファイル生成中にエラーが発生しました: {err}")
