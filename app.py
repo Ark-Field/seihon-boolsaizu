@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50連携）：受注番号を入力してボタンを押すだけで、自動でデータ取得からPDF・Excel生成まで行えます。")
+st.markdown("💡 @pocket（アプリ50連携）：データをセッション保持するため、ボタン操作でデータが消えることはありません。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -69,19 +69,39 @@ if os.path.exists(font_filename):
     except Exception as e:
         print(f"Font registration error: {e}")
 
-# --- URLパラメータの取得 ---
-query_params = st.query_params
-url_order_id = query_params.get("order_id", "")
-
-# --- サイドバー：手動検索機能 ---
-with st.sidebar:
-    st.header("🔍 @pocket（アプリ50）検索")
-    search_input = st.text_input("受注番号を入力（例: 260001）", value=url_order_id)
-    search_button = st.button("APIからデータを取得する")
-
-target_order_id = search_input if search_input else url_order_id
-
-api_fetched_data = None
+# --- Session State の初期化 ---
+if "loaded_data" not in st.session_state:
+    st.session_state.loaded_data = None
+if "order_id" not in st.session_state:
+    st.session_state.order_id = ""
+if "book_title" not in st.session_state:
+    st.session_state.book_title = ""
+if "quantity" not in st.session_state:
+    st.session_state.quantity = 0
+if "supplier_cover" not in st.session_state:
+    st.session_state.supplier_cover = ""
+if "due_cover" not in st.session_state:
+    st.session_state.due_cover = ""
+if "ampm_cover" not in st.session_state:
+    st.session_state.ampm_cover = ""
+if "supplier_foil" not in st.session_state:
+    st.session_state.supplier_foil = ""
+if "due_foil" not in st.session_state:
+    st.session_state.due_foil = ""
+if "ampm_foil" not in st.session_state:
+    st.session_state.ampm_foil = ""
+if "delivery_to" not in st.session_state:
+    st.session_state.delivery_to = ""
+if "hon_h" not in st.session_state:
+    st.session_state.hon_h = 0.0
+if "hon_w" not in st.session_state:
+    st.session_state.hon_w = 0.0
+if "zenpan_h" not in st.session_state:
+    st.session_state.zenpan_h = 1100.0
+if "zenpan_w" not in st.session_state:
+    st.session_state.zenpan_w = 800.0
+if "parts_rows" not in st.session_state:
+    st.session_state.parts_rows = []
 
 def get_field_val(rec, field_id, default=""):
     if not rec or field_id not in rec:
@@ -91,8 +111,8 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- アプリ50 APIからのデータ取得関数 ---
-def fetch_pocket_data(order_num):
+# --- APIデータ取得＆セッション保存関数 ---
+def fetch_and_store_pocket_data(order_num):
     try:
         api_key_50 = st.secrets["app50"]["api_key"]
         url_50 = "https://app050.at-pocket.com/seihon02_bb/api/apps/50/records"
@@ -103,152 +123,138 @@ def fetch_pocket_data(order_num):
             records = response.json().get("records", [])
             clean_target = str(order_num).replace("JS", "").strip()
             
+            target_rec = None
             for rec in records:
                 inner_rec = rec.get("record", rec)
                 f55 = str(get_field_val(inner_rec, "field-55")).strip()
                 if clean_target in [f55, f55.replace("JS", "")]:
-                    return rec
+                    target_rec = rec
+                    break
             
-            # 見つからない場合は総当たり
-            for rec in records:
-                inner_rec = rec.get("record", rec)
-                for k, v in inner_rec.items():
-                    v_str = str(v.get("value", v) if isinstance(v, dict) else v)
-                    if clean_target and clean_target in v_str.replace("JS", "").strip():
-                        return rec
+            if not target_rec:
+                for rec in records:
+                    inner_rec = rec.get("record", rec)
+                    for k, v in inner_rec.items():
+                        v_str = str(v.get("value", v) if isinstance(v, dict) else v)
+                        if clean_target and clean_target in v_str.replace("JS", "").strip():
+                            target_rec = rec
+                            break
+                    if target_rec:
+                        break
+            
+            if target_rec:
+                st.session_state.loaded_data = target_rec
+                r = target_rec.get("record", target_rec)
+                
+                st.session_state.order_id = str(get_field_val(r, "field-55", order_num))
+                st.session_state.book_title = str(get_field_val(r, "field-24", ""))
+                st.session_state.quantity = safe_int(get_field_val(r, "field-70", get_field_val(r, "field-25", 0)), 0)
+                
+                st.session_state.hon_h = safe_float(get_field_val(r, "field-27", 0.0), 0.0)
+                st.session_state.hon_w = safe_float(get_field_val(r, "field-28", 0.0), 0.0)
+                st.session_state.zenpan_h = safe_float(get_field_val(r, "field-67", 1100.0), 1100.0)
+                st.session_state.zenpan_w = safe_float(get_field_val(r, "field-68", 800.0), 800.0)
+                
+                st.session_state.delivery_to = str(get_field_val(r, "field-69", ""))
+                st.session_state.supplier_cover = str(get_field_val(r, "field-57", ""))
+                st.session_state.due_cover = str(get_field_val(r, "field-61", ""))
+                st.session_state.ampm_cover = str(get_field_val(r, "field-62", ""))
+                st.session_state.supplier_foil = str(get_field_val(r, "field-59", ""))
+                st.session_state.due_foil = str(get_field_val(r, "field-60", ""))
+                st.session_state.ampm_foil = str(get_field_val(r, "field-63", ""))
+
+                # サブテーブル解析
+                parts = []
+                f64_raw = r.get("field-64", [])
+                if isinstance(f64_raw, dict):
+                    f64_raw = f64_raw.get("value", [])
+                    
+                if isinstance(f64_raw, list) and len(f64_raw) > 0:
+                    for sub_row in f64_raw:
+                        sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
+                        if not isinstance(sub_rec, dict):
+                            continue
+                        
+                        def get_sub_val(key):
+                            val = sub_rec.get(key, "")
+                            if isinstance(val, dict):
+                                return val.get("value", "")
+                            return val if val is not None else ""
+
+                        b_name = str(get_sub_val("field-64_2")).strip()
+                        if not b_name:
+                            continue
+                        
+                        is_groove = "溝あき" in b_name
+                        parts.append({
+                            "部材名": b_name,
+                            "銘柄": str(get_sub_val("field-64_1")).strip(),
+                            "備考": "",
+                            "１冊面数": 0 if is_groove else safe_int(get_sub_val("field-64_4"), 1),
+                            "天地サイズ+-": safe_float(get_sub_val("field-64_5"), 0.0),
+                            "左右サイズ+-": safe_float(get_sub_val("field-64_6"), 0.0),
+                            "固定幅【背】": safe_float(get_sub_val("field-64_7"), 0.0),
+                            "レコードID": safe_int(sub_row.get("recordSubId", 1), 1)
+                        })
+                st.session_state.parts_rows = parts
+                return True
     except Exception as e:
         print(f"API取得エラー: {e}")
-    return None
+    return False
 
-# --- 検索ボタンまたはURLパラメータがある場合の取得 ---
-if search_button or url_order_id:
-    if target_order_id:
-        with st.spinner("⏳ @pocket（アプリ50）からデータを取得中..."):
-            api_fetched_data = fetch_pocket_data(target_order_id)
-            if api_fetched_data:
-                st.sidebar.success(f"🔗 アプリ50（受注番号: {target_order_id}）を発見しました！")
-            else:
-                st.sidebar.warning(f"⚠️ アプリ50内に「{target_order_id}」のレコードが見つかりませんでした。")
+# --- サイドバー：手動検索機能 ---
+with st.sidebar:
+    st.header("🔍 @pocket（アプリ50）検索")
+    search_input = st.text_input("受注番号を入力（例: 260001）", value=st.session_state.order_id)
+    search_button = st.button("APIからデータを取得する")
 
-# --- 変数の初期化 ---
-v_order_id = target_order_id
-v_book_title = ""
-v_quantity = 0
-v_supplier_cover = ""
-v_due_cover = ""
-v_ampm_cover = ""
-v_supplier_foil = ""
-v_due_foil = ""
-v_ampm_foil = ""
-v_delivery_to = ""
-v_hon_h = 0.0
-v_hon_w = 0.0
-v_zenpan_h = 1100.0
-v_zenpan_w = 800.0
-parts_rows = []
-
-# --- データ解析・マッピング ---
-def parse_record_data(rec):
-    global v_order_id, v_book_title, v_quantity, v_supplier_cover, v_due_cover, v_ampm_cover
-    global v_supplier_foil, v_due_foil, v_ampm_foil, v_delivery_to, v_hon_h, v_hon_w, v_zenpan_h, v_zenpan_w, parts_rows
-    
-    r = rec.get("record", rec)
-    v_order_id = str(get_field_val(r, "field-55", v_order_id))
-    v_book_title = str(get_field_val(r, "field-24", ""))
-    v_quantity = safe_int(get_field_val(r, "field-70", get_field_val(r, "field-25", 0)), 0)
-    
-    v_hon_h = safe_float(get_field_val(r, "field-27", 0.0), 0.0)
-    v_hon_w = safe_float(get_field_val(r, "field-28", 0.0), 0.0)
-    v_zenpan_h = safe_float(get_field_val(r, "field-67", 1100.0), 1100.0)
-    v_zenpan_w = safe_float(get_field_val(r, "field-68", 800.0), 800.0)
-    
-    v_delivery_to = str(get_field_val(r, "field-69", ""))
-    v_supplier_cover = str(get_field_val(r, "field-57", ""))
-    v_due_cover = str(get_field_val(r, "field-61", ""))
-    v_ampm_cover = str(get_field_val(r, "field-62", ""))
-    v_supplier_foil = str(get_field_val(r, "field-59", ""))
-    v_due_foil = str(get_field_val(r, "field-60", ""))
-    v_ampm_foil = str(get_field_val(r, "field-63", ""))
-
-    try:
-        f64_raw = r.get("field-64", [])
-        if isinstance(f64_raw, dict):
-            f64_raw = f64_raw.get("value", [])
-            
-        if isinstance(f64_raw, list) and len(f64_raw) > 0:
-            for sub_row in f64_raw:
-                sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
-                if not isinstance(sub_rec, dict):
-                    continue
-                
-                def get_sub_val(key):
-                    val = sub_rec.get(key, "")
-                    if isinstance(val, dict):
-                        return val.get("value", "")
-                    return val if val is not None else ""
-
-                b_name = str(get_sub_val("field-64_2")).strip()
-                if not b_name:
-                    continue
-                
-                is_groove = "溝あき" in b_name
-                parts_rows.append({
-                    "部材名": b_name,
-                    "銘柄": str(get_sub_val("field-64_1")).strip(),
-                    "備考": "",
-                    "１冊面数": 0 if is_groove else safe_int(get_sub_val("field-64_4"), 1),
-                    "天地サイズ+-": safe_float(get_sub_val("field-64_5"), 0.0),
-                    "左右サイズ+-": safe_float(get_sub_val("field-64_6"), 0.0),
-                    "固定幅【背】": safe_float(get_sub_val("field-64_7"), 0.0),
-                    "レコードID": safe_int(sub_row.get("recordSubId", 1), 1)
-                })
-    except Exception as e:
-        print(f"サブテーブル解析エラー: {e}")
-
-if api_fetched_data:
-    parse_record_data(api_fetched_data)
+if search_button and search_input:
+    with st.spinner(f"⏳ 受注番号「{search_input}」のデータを取得中..."):
+        success = fetch_and_store_pocket_data(search_input)
+        if success:
+            st.sidebar.success(f"🔗 受注番号: {search_input} のデータをロードしました！")
+            st.rerun()
+        else:
+            st.sidebar.warning(f"⚠️ アプリ50内に「{search_input}」が見つかりませんでした。")
 
 # --- 画面レイアウト ---
-if not api_fetched_data:
-    st.info("ℹ️ 受注番号をサイドバーに入力して検索するか、そのまま下のフォームに入力・PDFボタンを押してください。")
+if not st.session_state.loaded_data:
+    st.info("ℹ️ サイドバーに受注番号を入力して **[APIからデータを取得する]** ボタンを押してください。")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. 受注・発注基本情報")
-    order_id = st.text_input("受注番号", value=v_order_id)
-    book_title = st.text_input("書名（製品名）", value=v_book_title)
-    quantity = st.number_input("必要数量（受注部数）", min_value=0, value=v_quantity)
-    supplier_cover = st.text_input("表紙貼外注先", value=v_supplier_cover)
-    due_cover = st.text_input("納期（表紙）", value=v_due_cover)
-    ampm_cover = st.text_input("AMPM（表紙）", value=v_ampm_cover)
-    supplier_foil = st.text_input("表紙箔押外注先", value=v_supplier_foil)
-    due_foil = st.text_input("納期（箔押）", value=v_due_foil)
-    ampm_foil = st.text_input("AMPM（箔押）", value=v_ampm_foil)
-    delivery_to = st.text_input("納品先", value=v_delivery_to)
+    order_id = st.text_input("受注番号", value=st.session_state.order_id)
+    book_title = st.text_input("書名（製品名）", value=st.session_state.book_title)
+    quantity = st.number_input("必要数量（受注部数）", min_value=0, value=st.session_state.quantity)
+    supplier_cover = st.text_input("表紙貼外注先", value=st.session_state.supplier_cover)
+    due_cover = st.text_input("納期（表紙）", value=st.session_state.due_cover)
+    ampm_cover = st.text_input("AMPM（表紙）", value=st.session_state.ampm_cover)
+    supplier_foil = st.text_input("表紙箔押外注先", value=st.session_state.supplier_foil)
+    due_foil = st.text_input("納期（箔押）", value=st.session_state.due_foil)
+    ampm_foil = st.text_input("AMPM（箔押）", value=st.session_state.ampm_foil)
+    delivery_to = st.text_input("納品先", value=st.session_state.delivery_to)
 
 with col2:
     st.subheader("2. 本文仕様 ＆ 全判材料サイズ設定")
-    hon_h = st.number_input("本文 天地サイズ (mm)", min_value=0.0, value=v_hon_h)
-    hon_w = st.number_input("本文 左右サイズ (mm)", min_value=0.0, value=v_hon_w)
-    zenpan_h = st.number_input("材料規格 全判天地 (mm)", min_value=0.0, value=v_zenpan_h)
-    zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=v_zenpan_w)
+    hon_h = st.number_input("本文 天地サイズ (mm)", min_value=0.0, value=st.session_state.hon_h)
+    hon_w = st.number_input("本文 左右サイズ (mm)", min_value=0.0, value=st.session_state.hon_w)
+    zenpan_h = st.number_input("材料規格 全判天地 (mm)", min_value=0.0, value=st.session_state.zenpan_h)
+    zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=st.session_state.zenpan_w)
 
 st.markdown("---")
 st.subheader("3. 読込済み部材明細（パーツリスト確認・編集）")
 
-df_parts_input = pd.DataFrame(parts_rows) if parts_rows else pd.DataFrame(columns=["部材名", "銘柄", "備考", "１冊面数", "天地サイズ+-", "左右サイズ+-", "固定幅【背】", "レコードID"])
+df_parts_input = pd.DataFrame(st.session_state.parts_rows) if st.session_state.parts_rows else pd.DataFrame(columns=["部材名", "銘柄", "備考", "１冊面数", "天地サイズ+-", "左右サイズ+-", "固定幅【背】", "レコードID"])
 edited_parts = st.data_editor(df_parts_input, num_rows="dynamic", use_container_width=True)
 
 if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="primary"):
-    # もしデータがまだ読み込まれていない状態でボタンが押された場合、入力されたorder_idでその場で自動取得を試みる
-    if not api_fetched_data and order_id:
-        with st.spinner(f"⏳ 受注番号「{order_id}」のデータを自動取得中..."):
-            api_fetched_data = fetch_pocket_data(order_id)
-            if api_fetched_data:
-                parse_record_data(api_fetched_data)
+    if not st.session_state.loaded_data and order_id:
+        # まだロードされていない場合はその場で取得を試みる
+        fetch_and_store_pocket_data(order_id)
 
-    if not edited_parts.empty and edited_parts.iloc[0]["部材名"] == "":
+    if edited_parts.empty or (len(edited_parts) == 1 and str(edited_parts.iloc[0]["部材名"]) == ""):
         st.warning("⚠️ 部材明細が空です。データを読み込むか明細を追加してください。")
     else:
         try:
