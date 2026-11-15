@@ -17,7 +17,6 @@ import openpyxl
 # ページ基本設定
 st.set_page_config(page_title="芯ボール・背ボール・溝あき対応 発注書・図面自動作成システム", layout="wide")
 
-# カスタムスタイル（ダークネイビー調）
 st.markdown("""
 <style>
     .stButton>button {
@@ -33,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリID: 50）API連携：発注番号を手入力またはURLから指定してデータを取得し、発注書PDFおよびExcel集計表を生成します。")
+st.markdown("💡 @pocket（アプリID: 50）API連携：発注番号を手入力またはURLから指定してデータを取得します。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -76,14 +75,13 @@ url_order_id = query_params.get("order_id", "")
 # --- サイドバー：手動検索機能 ---
 with st.sidebar:
     st.header("🔍 @pocket レコード検索")
-    search_input = st.text_input("発注番号を入力（例: JS260543）", value=url_order_id)
+    search_input = st.text_input("発注番号を入力（例: 260543 または JS260543）", value=url_order_id)
     search_button = st.button("APIからデータを取得する")
 
-# 検索対象とする受注番号（手動入力またはURLパラメータ）
 target_order_id = search_input if search_input else url_order_id
 
 # デフォルト値の初期化
-default_order_id = target_order_id if target_order_id else "JS260543"
+default_order_id = target_order_id if target_order_id else "260543"
 default_book_title = "詩画集①"
 default_quantity = 1060
 default_supplier_cover = "㈱博勝堂"
@@ -106,9 +104,17 @@ default_parts_data = [
     {"部材名": "芯ボール", "銘柄": "NPCC#26", "備考": "", "１冊面数": 1, "天地サイズ+-": 6.0, "左右サイズ+-": -3.5, "固定幅【背】": 0.0, "レコードID": 3},
 ]
 
-# --- @pocket APIからのデータ自動取得（アプリID: 50） ---
 api_fetched_data = None
-# ボタンが押された、またはURLパラメータが存在する場合にAPIを叩く
+
+def get_field_val(rec, field_id, default=""):
+    if not rec or field_id not in rec:
+        return default
+    val = rec[field_id]
+    if isinstance(val, dict):
+        return val.get("value", default)
+    return val if val is not None else default
+
+# --- @pocket APIからのデータ自動取得（アプリID: 50） ---
 if search_button or url_order_id:
     if not target_order_id:
         st.sidebar.warning("⚠️ 発注番号を入力してください。")
@@ -125,34 +131,36 @@ if search_button or url_order_id:
                 res_json = response.json()
                 records = res_json.get("records", [])
                 
-                # field-23（受注番号）が一致するレコードを探索
+                # --- デバッグ用：取得できたレコードの field-23 の一覧をサイドバーに表示 ---
+                fetched_ids = []
                 for rec in records:
-                    f23_val = rec.get("field-23")
-                    if isinstance(f23_val, dict):
-                        f23_val = f23_val.get("value", "")
+                    val = get_field_val(rec, "field-23")
+                    fetched_ids.append(str(val))
+                
+                st.sidebar.info(f"ℹ️ API取得成功（全 {len(records)} 件）\n取得ID一覧: {', '.join(fetched_ids[:10])}")
+                # -------------------------------------------------------------
+
+                # 柔軟なマッチング（完全一致 または 「JS」の有無を吸収して比較）
+                clean_target = str(target_order_id).replace("JS", "").strip()
+                
+                for rec in records:
+                    f23_val = str(get_field_val(rec, "field-23")).strip()
+                    clean_f23 = f23_val.replace("JS", "").strip()
                     
-                    if str(f23_val).strip() == str(target_order_id).strip():
+                    if f23_val == str(target_order_id).strip() or clean_f23 == clean_target:
                         api_fetched_data = rec
                         break
                         
                 if api_fetched_data:
-                    st.sidebar.success(f"🔗 @pocketから発注番号 **{target_order_id}** のデータを正常に取得しました！")
+                    st.sidebar.success(f"🔗 発注番号 **{target_order_id}** のデータを正常に取得しました！")
                 else:
-                    st.sidebar.warning(f"⚠️ @pocket内に発注番号「{target_order_id}」のレコードが見つかりませんでした。")
+                    st.sidebar.warning(f"⚠️ API内に「{target_order_id}」と一致するレコードが見つかりませんでした。")
             else:
                 st.sidebar.error(f"API接続エラー (Status: {response.status_code})")
         except Exception as e:
             st.sidebar.error(f"API取得時例外エラー: {e}")
 
-def get_field_val(rec, field_id, default=""):
-    if not rec or field_id not in rec:
-        return default
-    val = rec[field_id]
-    if isinstance(val, dict):
-        return val.get("value", default)
-    return val if val is not None else default
-
-# APIデータが取得できた場合、新フィールドIDマッピングを反映
+# APIデータが取得できた場合のマッピング処理
 if api_fetched_data:
     default_order_id = str(get_field_val(api_fetched_data, "field-23", default_order_id))
     default_book_title = str(get_field_val(api_fetched_data, "field-24", default_book_title))
@@ -167,7 +175,6 @@ if api_fetched_data:
     default_ampm_foil = str(get_field_val(api_fetched_data, "field-63", default_ampm_foil))
     default_delivery_to = str(get_field_val(api_fetched_data, "field-69", default_delivery_to))
 
-    # --- field-31（柄名・種目）と field-64（部材明細）の結合・抽出処理 ---
     try:
         brand_mapping = {}
         f31_data = api_fetched_data.get("field-31", [])
@@ -186,7 +193,6 @@ if api_fetched_data:
                 if not b_name:
                     continue
                 is_groove = "溝あき" in b_name
-                
                 matched_brand = brand_mapping.get(b_name, "")
                 
                 extracted_parts.append({
