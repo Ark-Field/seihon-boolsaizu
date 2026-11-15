@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📦 芯ボール・背ボール・溝あき対応 発注計算 ＆ 図面付き発注書生成システム")
-st.markdown("💡 @pocket（アプリ50 ＆ アプリ29 連携）：親受注番号を基にアプリ29およびアプリ50のデータを確実に取得します。")
+st.markdown("💡 @pocket（アプリ50 ＆ アプリ29 連携）：サイドバーから受注番号を指定してデータを取得してください。")
 
 def safe_int(val, default=0):
     if pd.isna(val) or str(val).strip() == '' or str(val).lower() == 'nan':
@@ -69,6 +69,10 @@ if os.path.exists(font_filename):
     except Exception as e:
         print(f"Font registration error: {e}")
 
+# --- URLパラメータの取得 ---
+query_params = st.query_params
+url_order_id = query_params.get("order_id", "")
+
 # --- Session State の初期化 ---
 if "loaded_data" not in st.session_state:
     st.session_state.loaded_data = None
@@ -77,7 +81,7 @@ if "app29_data" not in st.session_state:
 if "parent_order_id" not in st.session_state:
     st.session_state.parent_order_id = ""
 if "order_id" not in st.session_state:
-    st.session_state.order_id = ""
+    st.session_state.order_id = url_order_id
 if "book_title" not in st.session_state:
     st.session_state.book_title = ""
 if "quantity" not in st.session_state:
@@ -106,8 +110,8 @@ if "zenpan_w" not in st.session_state:
     st.session_state.zenpan_w = 800.0
 if "parts_rows" not in st.session_state:
     st.session_state.parts_rows = []
-if "app29_raw_subtable" not in st.session_state:
-    st.session_state.app29_raw_subtable = []
+if "app29_parts_rows" not in st.session_state:
+    st.session_state.app29_parts_rows = []
 
 def get_field_val(rec, field_id, default=""):
     if not rec or field_id not in rec:
@@ -117,7 +121,7 @@ def get_field_val(rec, field_id, default=""):
         return val.get("value", default)
     return val if val is not None else default
 
-# --- APIデータ取得＆アプリ29連携関数 ---
+# --- APIデータ取得＆連携関数 ---
 def fetch_and_store_pocket_data(order_num):
     try:
         # 1. アプリ50からデータを取得
@@ -154,7 +158,6 @@ def fetch_and_store_pocket_data(order_num):
                 r50 = target_rec_50.get("record", target_rec_50)
                 
                 st.session_state.order_id = str(get_field_val(r50, "field-55", order_num))
-                # アプリ50の field-23 から「親受注番号」を取得
                 parent_id = str(get_field_val(r50, "field-23", "")).strip()
                 st.session_state.parent_order_id = parent_id
                 
@@ -174,9 +177,8 @@ def fetch_and_store_pocket_data(order_num):
                 st.session_state.due_foil = str(get_field_val(r50, "field-60", ""))
                 st.session_state.ampm_foil = str(get_field_val(r50, "field-63", ""))
 
-                combined_parts = []
-
-                # 2. 【アプリ29（親データ）】の取得処理（クエリ検索対応）
+                # 2. 【アプリ29（親データ）】の取得処理（クエリピンポイント検索）
+                app29_rows = []
                 if parent_id:
                     try:
                         api_key_29 = st.secrets["app29"]["api_key"]
@@ -210,46 +212,32 @@ def fetch_and_store_pocket_data(order_num):
                             st.session_state.app29_data = target_rec_29
                             r29 = target_rec_29.get("record", target_rec_29)
                             
-                            # アプリ29のサブテーブル field-31（材料部材明細）を解析
                             f31_raw = r29.get("field-31", [])
                             if isinstance(f31_raw, dict):
                                 f31_raw = f31_raw.get("value", [])
                             
-                            subtable_items = []
                             if isinstance(f31_raw, list):
                                 for sub_row in f31_raw:
                                     sub_rec = sub_row.get("record", sub_row) if isinstance(sub_row, dict) else sub_row
                                     if not isinstance(sub_rec, dict):
                                         continue
-                                    
                                     def get_sub29_val(key):
                                         val = sub_rec.get(key, "")
                                         if isinstance(val, dict):
                                             return val.get("value", "")
                                         return val if val is not None else ""
-
-                                    kind = str(get_sub29_val("field-31_6")).strip() # 種目
-                                    content = str(get_sub29_val("field-31_1")).strip() # 内容
                                     
-                                    subtable_items.append({"種目 (field-31_6)": kind, "内容 (field-31_1)": content})
-                                    
-                                    if kind:
-                                        is_groove = "溝あき" in kind
-                                        combined_parts.append({
-                                            "部材名": kind,
-                                            "銘柄": content,
-                                            "備考": "",
-                                            "１冊面数": 0 if is_groove else 1,
-                                            "天地サイズ+-": 7.0 if "ボール" in kind else 0.0,
-                                            "左右サイズ+-": -3.5 if "芯ボール" in kind else 0.0,
-                                            "固定幅【背】": 10.0 if "背ボール" in kind else 0.0,
-                                            "レコードID": 1
-                                        })
-                            st.session_state.app29_raw_subtable = subtable_items
+                                    app29_rows.append({
+                                        "種目": str(get_sub29_val("field-31_6")).strip(),
+                                        "内容": str(get_sub29_val("field-31_1")).strip()
+                                    })
                     except Exception as e2:
                         print(f"アプリ29取得エラー: {e2}")
 
-                # 3. アプリ50側のサブデータ（field-64）も併せて取得・結合
+                st.session_state.app29_parts_rows = app29_rows
+
+                # 3. アプリ50の計算用パーツリスト（field-64）の取得
+                app50_parts = []
                 f64_raw = r50.get("field-64", [])
                 if isinstance(f64_raw, dict):
                     f64_raw = f64_raw.get("value", [])
@@ -268,7 +256,7 @@ def fetch_and_store_pocket_data(order_num):
                         if not b_name:
                             continue
                         is_groove = "溝あき" in b_name
-                        combined_parts.append({
+                        app50_parts.append({
                             "部材名": b_name,
                             "銘柄": str(get_sub_val("field-64_1")).strip(),
                             "備考": "",
@@ -279,7 +267,7 @@ def fetch_and_store_pocket_data(order_num):
                             "レコードID": safe_int(sub_row.get("recordSubId", 1), 1)
                         })
 
-                st.session_state.parts_rows = combined_parts
+                st.session_state.parts_rows = app50_parts
                 return True
     except Exception as e:
         print(f"API取得エラー: {e}")
@@ -300,22 +288,13 @@ if search_button and search_input:
         else:
             st.sidebar.warning(f"⚠️ アプリ50内に「{search_input}」が見つかりませんでした。")
 
+# 自動URLパラメータ連携
+if url_order_id and not st.session_state.loaded_data:
+    fetch_and_store_pocket_data(url_order_id)
+
 # --- 画面レイアウト ---
 if not st.session_state.loaded_data:
     st.info("ℹ️ サイドバーに受注番号を入力して **[APIからデータを取得する]** ボタンを押してください。")
-
-# --- アプリ29（親データ）の取得状況と内容を表示するプレビュー領域 ---
-if st.session_state.loaded_data:
-    with st.expander("🔗 【アプリ29 親データ連携プレビュー】（親受注番号: " + str(st.session_state.parent_order_id) + "）", expanded=True):
-        if st.session_state.app29_data:
-            st.success("✅ アプリ29（親レコード）のクエリピンポイント検索＆データ取得に成功しました！")
-            if st.session_state.app29_raw_subtable:
-                st.write("### 📋 アプリ29 サブテーブル（材料部材明細 `field-31`）の抽出データ:")
-                st.dataframe(pd.DataFrame(st.session_state.app29_raw_subtable), use_container_width=True, hide_index=True)
-            else:
-                st.warning("⚠️ アプリ29の親レコードは見つかりましたが、サブテーブル `field-31` が空またはデータがありません。")
-        else:
-            st.warning(f"⚠️ アプリ50の親受注番号「{st.session_state.parent_order_id}」に一致するレコードがアプリ29内で見つかりませんでした。")
 
 col1, col2 = st.columns(2)
 
@@ -339,9 +318,27 @@ with col2:
     zenpan_h = st.number_input("材料規格 全判天地 (mm)", min_value=0.0, value=st.session_state.zenpan_h)
     zenpan_w = st.number_input("材料規格 全判左右 (mm)", min_value=0.0, value=st.session_state.zenpan_w)
 
-st.markdown("---")
-st.subheader("3. 読込済み部材明細（アプリ29 ＆ アプリ50 統合パーツリスト）")
+# --- ★ 追加：ヘッダー情報の下に配置する【アプリ29 部材一覧表（内容のみ編集可能）】 ---
+if st.session_state.loaded_data and st.session_state.app29_parts_rows:
+    st.markdown("---")
+    st.subheader("📋 アプリ29 親データ：部材一覧表（材料部材明細 field-31）")
+    st.caption("💡 項目【内容】のみ画面上で編集可能です（APIへの上書き保存は行いません）。")
+    
+    df_app29_input = pd.DataFrame(st.session_state.app29_parts_rows)
+    # 編集用：種目は閲覧用（無効化したい場合はStreamlitの性質上表示のみにするか、列構成を調整）
+    edited_app29 = st.data_editor(
+        df_app29_input,
+        use_container_width=True,
+        hide_index=True,
+        disabled=["種目"]
+    )
+    # 編集された内容を保持
+    app29_display_rows = edited_app29.to_dict('records')
+else:
+    app29_display_rows = []
 
+st.markdown("---")
+st.subheader("3. 計算用パーツリスト（アプリ50 独立データ）")
 df_parts_input = pd.DataFrame(st.session_state.parts_rows) if st.session_state.parts_rows else pd.DataFrame(columns=["部材名", "銘柄", "備考", "１冊面数", "天地サイズ+-", "左右サイズ+-", "固定幅【背】", "レコードID"])
 edited_parts = st.data_editor(df_parts_input, num_rows="dynamic", use_container_width=True)
 
@@ -350,7 +347,7 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
         fetch_and_store_pocket_data(order_id)
 
     if edited_parts.empty or (len(edited_parts) == 1 and str(edited_parts.iloc[0]["部材名"]) == ""):
-        st.warning("⚠️ 部材明細が空です。データを読み込むか明細を追加してください。")
+        st.warning("⚠️ 計算用部材明細が空です。データを読み込むか明細を追加してください。")
     else:
         try:
             calculated_rows = []
@@ -398,6 +395,10 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             
             styles = getSampleStyleSheet()
             title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_name, fontSize=22, leading=26, alignment=1, textColor=colors.HexColor('#111'))
+            
+            # ★ 受注番号と書名を16ポイント太字にするスタイル
+            header_bold_style = ParagraphStyle('HeaderBoldStyle', parent=styles['Normal'], fontName=font_name, fontSize=16, leading=20, alignment=1, textColor=colors.HexColor('#111'))
+            
             due_style = ParagraphStyle('DueStyle', parent=styles['Normal'], fontName=font_name, fontSize=13, leading=17, alignment=1, textColor=colors.HexColor('#c00'))
             normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13)
             center_style = ParagraphStyle('CenterStyle', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=13, alignment=1)
@@ -405,16 +406,41 @@ if st.button("🖨️ 発注書PDF ＆ Excel集計表を生成する", type="pri
             
             story.append(Paragraph("<b>発 注 書</b>", title_style))
             story.append(Spacer(1, 6))
+            
+            # ★ 受注番号と書名を16pt太字で表示
+            story.append(Paragraph(f"<b>受注番号：{order_id} ｜ 書名：{book_title}</b>", header_bold_style))
+            story.append(Spacer(1, 8))
+            
             story.append(Paragraph(f"<b>【 表紙貼外注先 】</b> {supplier_cover} 様 ｜ <font color='#c00'><b>納期： {due_cover} ({ampm_cover})</b></font>", due_style))
             story.append(Spacer(1, 4))
             story.append(Paragraph(f"<b>【 表紙箔押外注先 】</b> {supplier_foil} 様 ｜ <font color='#c00'><b>納期： {due_foil} ({ampm_foil})</b></font>", due_style))
             story.append(Spacer(1, 8))
-            story.append(Paragraph(f"<b>納品先:</b> {delivery_to} 様 ｜ <b>受注番号:</b> {order_id} ｜ <b>書名:</b> {book_title}", normal_style))
-            story.append(Paragraph(f"<b>必要部数:</b> {quantity}部 ｜ <b>全判規格:</b> {zenpan_w}mm × {zenpan_h}mm ｜ <b>本文サイズ:</b> {hon_w}mm × {hon_h}mm", normal_style))
+            story.append(Paragraph(f"<b>納品先:</b> {delivery_to} 様 ｜ <b>必要部数:</b> {quantity}部 ｜ <b>全判規格:</b> {zenpan_w}mm × {zenpan_h}mm ｜ <b>本文サイズ:</b> {hon_w}mm × {hon_h}mm", normal_style))
             story.append(Spacer(1, 10))
             
+            # --- アプリ29の部材一覧表（PDF下部掲載） ---
+            if app29_display_rows:
+                story.append(Paragraph("<b>■ 部材一覧表（アプリ29 材料部材明細）</b>", normal_style))
+                story.append(Spacer(1, 4))
+                app29_table_data = [[Paragraph("<b>種目</b>", table_header_style), Paragraph("<b>内容</b>", table_header_style)]]
+                for ar in app29_display_rows:
+                    app29_table_data.append([
+                        Paragraph(str(ar.get("種目", "")), normal_style),
+                        Paragraph(str(ar.get("内容", "")), normal_style)
+                    ])
+                t_app29 = Table(app29_table_data, colWidths=[200, 340])
+                t_app29.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3d59')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#999')),
+                    ('PADDING', (0,0), (-1,-1), 4),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ]))
+                story.append(t_app29)
+                story.append(Spacer(1, 10))
+
             # --- 図解セクション ---
-            story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 仕様情報</b>", normal_style))
+            story.append(Paragraph("<b>■ 部材ビジュアル図解 ＆ 計算仕様情報</b>", normal_style))
             story.append(Spacer(1, 4))
             
             card_metrics = []
