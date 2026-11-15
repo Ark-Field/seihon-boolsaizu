@@ -276,9 +276,9 @@ def fetch_and_store_pocket_data(order_num):
 
 # --- サイドバー：手動検索機能 ---
 with st.sidebar:
-    st.header("🔍 DBpocket（アプリ50）検索")
-    search_input = st.text_input("受注番号を入力（例: 260543）", value=st.session_state.order_id)
-    search_button = st.button("APIからデータを取得する")
+    st.header("🔍 ")
+    search_input = st.text_input("受注番号を入力（）", value=st.session_state.order_id)
+    search_button = st.button("データ取得")
 
 if search_button and search_input:
     with st.spinner(f"⏳ 受注番号「{search_input}」およびアプリ29親データを取得中..."):
@@ -336,7 +336,7 @@ if st.session_state.loaded_data and st.session_state.app29_parts_rows:
     app29_display_rows = edited_app29.to_dict('records')
 
 st.markdown("---")
-st.subheader("3. 計算用パーツリスト（アプリ50 独立データ）")
+st.subheader("3. 計算用パーツリスト（）")
 df_parts_input = pd.DataFrame(st.session_state.parts_rows) if st.session_state.parts_rows else pd.DataFrame(columns=["部材名", "銘柄", "備考", "１冊面数", "天地サイズ+-", "左右サイズ+-", "固定幅【背】", "レコードID"])
 edited_parts = st.data_editor(df_parts_input, num_rows="dynamic", use_container_width=True)
 
